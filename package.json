@@ -1,0 +1,48 @@
+{
+  "name": "rated-review-loop",
+  "version": "0.1.0",
+  "description": "Review AI-written code in a loop, let the owner rate every finding, and alert when review usefulness drops.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rated-review-loop": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "examples",
+    "README-ko_kr.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.23.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check:readme-sync": "node scripts/check-readme-sync.ts",
+    "prepare": "tsc -p tsconfig.build.json"
+  },
+  "keywords": [
+    "code-review",
+    "ai",
+    "claude-code",
+    "codex",
+    "hooks",
+    "cli"
+  ],
+  "dependencies": {
+    "picomatch": "^4.0.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.0",
+    "@types/picomatch": "^3.0.1",
+    "eslint": "^10.14.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^5.1.0"
+  }
+}

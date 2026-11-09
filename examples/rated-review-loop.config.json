@@ -1,0 +1,9 @@
+{
+  "skill": "node_modules/rated-review-loop/skills/review-completed-code/SKILL.md",
+  "guidelines": ["AGENTS.md", "docs/architecture.md"],
+  "checks": ["pnpm typecheck", "pnpm lint"],
+  "include": ["src/**/*.{ts,tsx}", "scripts/**/*.{js,mjs,ts}"],
+  "reviewer": { "mode": "session" },
+  "language": "en",
+  "stats": { "groupBy": ["skill", "reviewer"], "window": 100, "threshold": 0.8 }
+}

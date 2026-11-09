@@ -1,0 +1,5 @@
+node_modules/
+dist/
+coverage/
+# Local working state (snapshots of source code). The ledger is committed.
+.rated-review-loop/local/
