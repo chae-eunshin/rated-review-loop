@@ -1,9 +1,10 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { begin, handleStop, ready } from "../src/cycle.ts";
 import { reviewWithCli } from "../src/review.ts";
+import { codexSessionModel } from "../src/reviewers/codex.ts";
 import type { Spawn } from "../src/reviewers/index.ts";
 import { sessionKey } from "../src/store.ts";
 import { modelFromTranscript } from "../src/transcript.ts";
@@ -89,6 +90,20 @@ describe("CLI reviewers", () => {
     const bad = { ...report, findings: [{ ...report.findings[0], line: 500 }] };
     const spawn: Spawn = () => ({ status: 0, stderr: "", stdout: JSON.stringify({ structured_output: bad }) });
     expect(() => reviewWithCli(ctx, runId, spawn)).toThrow(/inside the change/);
+  });
+});
+
+describe("codexSessionModel", () => {
+  it("finds the session log by thread id and reads its model", () => {
+    const home = join(repo.root, "codex-home");
+    mkdirSync(join(home, "sessions/2026/11/09"), { recursive: true });
+    writeFileSync(
+      join(home, "sessions/2026/11/09/rollout-2026-11-09T23-00-00-thread-123.jsonl"),
+      `${JSON.stringify({ type: "turn_context", payload: { model: "codex-real" } })}\n`,
+    );
+    expect(codexSessionModel("thread-123", home)).toBe("codex-real");
+    expect(codexSessionModel("thread-404", home)).toBe("unknown");
+    expect(codexSessionModel(undefined, home)).toBe("unknown");
   });
 });
 

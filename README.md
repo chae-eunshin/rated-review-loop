@@ -84,7 +84,7 @@ The workflow comments only when a group is at or below the threshold, keeps a si
 | --- | --- | --- |
 | `session` | The agent that wrote the code, in the same session | From the session transcript |
 | `claude-cli` | `claude -p` with read-only tools and a JSON schema | Reported by Claude Code |
-| `codex-cli` | `codex exec --sandbox read-only` with an output schema | `reviewer.model` if set, otherwise `unknown` |
+| `codex-cli` | `codex exec --sandbox read-only` with an output schema | From the Codex session log |
 
 All modes produce the same report shape, so ratings and statistics do not depend on the reviewer. CLI reviewers use the logins of the installed CLIs; no API key is stored by this tool.
 
@@ -152,7 +152,6 @@ rated-review-loop stats [--format json|text|markdown]   Usefulness per skill ver
 - The loop measures whether findings were useful, not what the review missed. A run with no findings is not proof of correctness.
 - Ratings are only as good as the owner's answers; ambiguous answers should stay unrated.
 - Pull requests from forks get a read-only token, so the health comment cannot be posted there.
-- `codex exec` does not report its default model; set `reviewer.model` to record it.
 
 ## Contributing
 

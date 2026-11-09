@@ -84,7 +84,7 @@ cp node_modules/rated-review-loop/examples/review-health.yml .github/workflows/r
 | --- | --- | --- |
 | `session` | 코드를 쓴 에이전트가 같은 세션에서 | 세션 대화 기록에서 읽음 |
 | `claude-cli` | 읽기 전용 도구와 JSON 스키마를 건 `claude -p` | Claude Code가 알려 준 값 |
-| `codex-cli` | 출력 스키마를 건 `codex exec --sandbox read-only` | `reviewer.model`을 설정했으면 그 값, 아니면 `unknown` |
+| `codex-cli` | 출력 스키마를 건 `codex exec --sandbox read-only` | Codex 세션 기록에서 읽음 |
 
 모든 모드가 같은 형식의 결과를 내기 때문에 평가와 통계는 리뷰어와 상관없이 동작합니다. CLI 리뷰어는 설치된 CLI의 로그인을 그대로 쓰며, 이 도구는 API 키를 저장하지 않습니다.
 
@@ -152,7 +152,6 @@ rated-review-loop stats [--format json|text|markdown]   Usefulness per skill ver
 - 이 도구는 지적이 유용했는지를 재지, 리뷰가 무엇을 놓쳤는지는 재지 않습니다. 지적이 없는 실행이 코드가 맞다는 증거는 아닙니다.
 - 평가의 질은 책임자의 답에 달려 있습니다. 모호한 답은 미평가로 두세요.
 - 포크에서 온 PR은 읽기 전용 토큰을 받기 때문에 건강도 댓글을 달 수 없습니다.
-- `codex exec`는 기본 모델을 알려 주지 않습니다. 기록하려면 `reviewer.model`을 설정하세요.
 
 ## 기여하기
 
