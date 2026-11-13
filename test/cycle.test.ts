@@ -64,17 +64,28 @@ describe("review cycle", () => {
     expect(ctx.store.readRun(runId).files).toEqual([]);
   });
 
-  it("tolerates binary and oversized files, but refuses to review them", () => {
+  it("leaves binary and oversized files out of the review and reports them", () => {
     writeFileSync(join(repo.root, "logo.png"), Buffer.from([0x89, 0x50, 0x00, 0x01]));
     writeFileSync(join(repo.root, "big.txt"), "x".repeat(3 * 1024 * 1024));
     const ctx = repo.context();
-    begin(ctx, key, "with assets");
+    const { runId } = begin(ctx, key, "with assets");
     writeFileSync(join(repo.root, "logo.png"), Buffer.from([0x89, 0x50, 0x00, 0x02]));
     writeFileSync(join(repo.root, "big.txt"), "y".repeat(3 * 1024 * 1024));
-    expect(() => ready(ctx, key, ["logo.png"])).toThrow(/Not reviewable/);
-    expect(() => ready(ctx, key, ["big.txt"])).toThrow(/Not reviewable/);
     repo.write("src/value.ts", "export const value = 2;\n");
-    expect(ready(ctx, key, ["src/value.ts"]).phase).toBe("ready");
+    expect(ready(ctx, key, ["logo.png", "big.txt", "src/value.ts"])).toEqual({
+      runId,
+      phase: "ready",
+      files: ["src/value.ts"],
+      notReviewable: ["logo.png", "big.txt"],
+    });
+    expect(ctx.store.readRun(runId).changes?.map((change) => change.path)).toEqual(["src/value.ts"]);
+  });
+
+  it("skips the review when only unreviewable files changed", () => {
+    const ctx = repo.context();
+    begin(ctx, key, "replace logo");
+    writeFileSync(join(repo.root, "logo.png"), Buffer.from([0x89, 0x50, 0x00, 0x03]));
+    expect(ready(ctx, key, ["logo.png"])).toMatchObject({ phase: "skipped", files: [], notReviewable: ["logo.png"] });
   });
 
   it("stores content ids instead of source in the run file", () => {

@@ -91,7 +91,15 @@ export function begin(ctx: Context, key: string, task: string): { runId: string;
   return { runId: run.id, phase: run.phase };
 }
 
-export function ready(ctx: Context, key: string, files: string[]): { runId: string; phase: string; files: string[] } {
+export interface ReadyResult {
+  runId: string;
+  phase: string;
+  files: string[];
+  /** Changed files left out of the review because they are binary or larger than 2 MB. */
+  notReviewable: string[];
+}
+
+export function ready(ctx: Context, key: string, files: string[]): ReadyResult {
   const run = ctx.store.active(key);
   if (!run || !["implementing", "checks-failed", "stale"].includes(run.phase)) {
     throw new Error("ready is only valid after begin, while implementing.");
@@ -101,18 +109,24 @@ export function ready(ctx: Context, key: string, files: string[]): { runId: stri
   const selected = [...new Set(files)];
   const unknown = selected.find((path) => !(path in current) && !(path in run.baseline));
   if (unknown !== undefined) throw new Error(`Not in the review scope: ${unknown}`);
-  const changedFiles = selected.filter((path) => current[path] !== run.baseline[path]);
   // Only the files under review are read, and the fingerprint check at Stop guarantees they are what gets checked.
-  const changes = changedFiles.map((path) => reviewableChange(ctx, run, path));
-  run.files = changedFiles;
+  const changes: Change[] = [];
+  const notReviewable: string[] = [];
+  for (const path of selected.filter((candidate) => current[candidate] !== run.baseline[candidate])) {
+    const change = reviewableChange(ctx, run, path);
+    if (change === null) notReviewable.push(path);
+    else changes.push(change);
+  }
+  run.files = changes.map((change) => change.path);
   run.changes = changes;
   run.phase = run.files.length ? "ready" : "skipped";
   run.expectedFingerprint = fingerprint(current);
   ctx.store.saveRun(run);
-  return { runId: run.id, phase: run.phase, files: run.files };
+  return { runId: run.id, phase: run.phase, files: run.files, notReviewable };
 }
 
-function reviewableChange(ctx: Context, run: Run, path: string): Change {
+/** The change to review, or `null` when either side is binary or too large to review. */
+function reviewableChange(ctx: Context, run: Run, path: string): Change | null {
   try {
     return {
       path,
@@ -120,9 +134,7 @@ function reviewableChange(ctx: Context, run: Run, path: string): Change {
       after: readWorkingText(ctx.root, path),
     };
   } catch (error) {
-    if (error instanceof NotReviewableError) {
-      throw new Error(`Not reviewable (binary or larger than 2 MB), leave it out of ready: ${path}`, { cause: error });
-    }
+    if (error instanceof NotReviewableError) return null;
     throw error;
   }
 }
