@@ -59,7 +59,8 @@ the question, then end the turn. Never answer the question yourself.
 
 ## Ratings
 
-Record only ratings the owner actually gave: `rate <run-id> <F#> <label> [note]`.
+Record only ratings the owner actually gave, one finding per command:
+`npx rated-review-loop rate <run-id> <F#> <label> [note]`.
 
 | Label | Meaning |
 | --- | --- |

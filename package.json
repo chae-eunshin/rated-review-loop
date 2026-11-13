@@ -1,6 +1,6 @@
 {
   "name": "rated-review-loop",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "description": "Review AI-written code in a loop, let the owner rate every finding, and alert when review usefulness drops.",
   "license": "MIT",
   "author": "chae-eunshin",
