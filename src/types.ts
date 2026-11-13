@@ -72,17 +72,23 @@ export type Phase =
   | "skipped"
   | "cancelled";
 
+/** Runs in these phases are over; `prune` may delete them. */
+export const FINISHED_PHASES: ReadonlySet<string> = new Set<Phase>(["completed", "skipped", "cancelled"]);
+
 export type QuestionStatus = "pending" | "reminded" | "asked" | "resolved" | "missed";
 
-/** Local working state of one review cycle. Holds source snapshots, so it is never committed. */
+export const RUN_SCHEMA_VERSION = 2;
+
+/** Local working state of one review cycle. Holds the reviewed source, so it is never committed. */
 export interface Run {
-  schemaVersion: 1;
+  schemaVersion: typeof RUN_SCHEMA_VERSION;
   id: string;
   key: string;
   task: string;
   phase: Phase;
   skill: string;
   startedAt: string;
+  /** Path → content id at `begin` (see `Snapshot`), not the content itself. */
   baseline: Record<string, string>;
   files: string[];
   expectedFingerprint?: string;

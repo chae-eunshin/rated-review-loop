@@ -4,11 +4,25 @@ import { dirname } from "node:path";
 
 import { checksPassed, runChecks, type CheckRunner } from "./checks.ts";
 import { clientOfMode, skillPath, type Config } from "./config.ts";
-import { fingerprint, Ledger, LocalStore, sessionKey, skillVersion, snapshot } from "./store.ts";
+import {
+  captureBaseline,
+  fingerprint,
+  Ledger,
+  LocalStore,
+  NotReviewableError,
+  readBaselineText,
+  readWorkingText,
+  sessionKey,
+  skillVersion,
+  snapshot,
+} from "./store.ts";
 import { modelFromTranscript } from "./transcript.ts";
 import {
+  FINISHED_PHASES,
   isLabel,
   LABELS,
+  RUN_SCHEMA_VERSION,
+  type Change,
   type Client,
   type Finding,
   type LedgerEntry,
@@ -46,16 +60,19 @@ export interface StopEvent {
 }
 
 const now = (): string => new Date().toISOString();
-const FINISHED = new Set(["completed", "skipped", "cancelled"]);
+
+/** Finished runs older than this are deleted from local storage by `begin` and `prune`. The ledger is never pruned. */
+export const PRUNE_AFTER_DAYS = 14;
 
 export function begin(ctx: Context, key: string, task: string): { runId: string; phase: string } {
   if (!task.trim()) throw new Error("A task description is required.");
   const previous = ctx.store.active(key);
-  if (previous && !FINISHED.has(previous.phase)) {
+  if (previous && !FINISHED_PHASES.has(previous.phase)) {
     throw new Error(`Run ${previous.id} is still ${previous.phase}: resume it or cancel it first.`);
   }
+  ctx.store.prune(PRUNE_AFTER_DAYS);
   const run: Run = {
-    schemaVersion: 1,
+    schemaVersion: RUN_SCHEMA_VERSION,
     id: randomUUID(),
     key,
     task,
@@ -63,7 +80,7 @@ export function begin(ctx: Context, key: string, task: string): { runId: string;
     skill: skillVersion(ctx.root, ctx.config),
     startedAt: now(),
     // Files that were already dirty are part of the baseline, so earlier human edits are not attributed to the AI.
-    baseline: snapshot(ctx.root, ctx.config),
+    baseline: captureBaseline(ctx.root, ctx.config, ctx.store),
     files: [],
     checks: [],
     attempts: [],
@@ -74,7 +91,15 @@ export function begin(ctx: Context, key: string, task: string): { runId: string;
   return { runId: run.id, phase: run.phase };
 }
 
-export function ready(ctx: Context, key: string, files: string[]): { runId: string; phase: string; files: string[] } {
+export interface ReadyResult {
+  runId: string;
+  phase: string;
+  files: string[];
+  /** Changed files left out of the review because they are binary or larger than 2 MB. */
+  notReviewable: string[];
+}
+
+export function ready(ctx: Context, key: string, files: string[]): ReadyResult {
   const run = ctx.store.active(key);
   if (!run || !["implementing", "checks-failed", "stale"].includes(run.phase)) {
     throw new Error("ready is only valid after begin, while implementing.");
@@ -84,11 +109,40 @@ export function ready(ctx: Context, key: string, files: string[]): { runId: stri
   const selected = [...new Set(files)];
   const unknown = selected.find((path) => !(path in current) && !(path in run.baseline));
   if (unknown !== undefined) throw new Error(`Not in the review scope: ${unknown}`);
-  run.files = selected.filter((path) => current[path] !== run.baseline[path]);
+  // Only the files under review are read, and the fingerprint check at Stop guarantees they are what gets checked.
+  const changes: Change[] = [];
+  const notReviewable: string[] = [];
+  for (const path of selected.filter((candidate) => current[candidate] !== run.baseline[candidate])) {
+    const change = reviewableChange(ctx, run, path);
+    if (change === null) notReviewable.push(path);
+    else changes.push(change);
+  }
+  run.files = changes.map((change) => change.path);
+  run.changes = changes;
   run.phase = run.files.length ? "ready" : "skipped";
   run.expectedFingerprint = fingerprint(current);
   ctx.store.saveRun(run);
-  return { runId: run.id, phase: run.phase, files: run.files };
+  return { runId: run.id, phase: run.phase, files: run.files, notReviewable };
+}
+
+/** The change to review, or `null` when either side is binary or too large to review. */
+function reviewableChange(ctx: Context, run: Run, path: string): Change | null {
+  try {
+    return {
+      path,
+      before: readBaselineText(ctx.root, ctx.store, path, run.baseline[path]),
+      after: readWorkingText(ctx.root, path),
+    };
+  } catch (error) {
+    if (error instanceof NotReviewableError) return null;
+    throw error;
+  }
+}
+
+/** Deletes local runs that finished more than `days` ago and the stored file copies only they used. */
+export function prune(ctx: Context, days = PRUNE_AFTER_DAYS): { runs: number; objects: number } {
+  if (!Number.isFinite(days) || days < 0) throw new Error("--days must be zero or a positive number.");
+  return ctx.store.prune(days);
 }
 
 function changed(ctx: Context, run: Run): boolean {
@@ -145,8 +199,7 @@ function verifyAndRequestReview(
   if (ctx.store.readRun(run.id).phase !== "checking") {
     return { systemMessage: "The run was closed while checks were running; it is not reactivated." };
   }
-  const after = snapshot(ctx.root, ctx.config);
-  const stale = fingerprint(after) !== run.expectedFingerprint;
+  const stale = fingerprint(snapshot(ctx.root, ctx.config)) !== run.expectedFingerprint;
   if (stale || !checksPassed(ctx.config, run.checks)) {
     run.phase = stale ? "stale" : "checks-failed";
     ctx.store.saveRun(run);
@@ -154,7 +207,6 @@ function verifyAndRequestReview(
       systemMessage: `Review skipped: ${run.phase}. Check results: ${BIN} status ${run.key}. Do not report the work as done; look at the failing checks.`,
     };
   }
-  run.changes = run.files.map((path) => ({ path, before: run.baseline[path] ?? null, after: after[path] ?? null }));
   run.phase = "awaiting-review";
   run.reviewRequestedAt = now();
   const cliClient = clientOfMode(ctx.config.reviewer.mode);

@@ -24,11 +24,11 @@ begin ──► implement ──► ready ──► [Stop hook] checks ──►
                                                         or claude/codex CLI
 ```
 
-1. **begin**이 범위 안의 파일을 스냅샷으로 남깁니다. 작업 전부터 있던 수정이 에이전트 몫으로 잡히지 않습니다.
+1. **begin**이 범위 안의 파일마다 내용 식별값(git blob id)을 남깁니다. 작업 전부터 있던 수정이 에이전트 몫으로 잡히지 않습니다. 바뀌지 않은 tracked 파일은 읽지 않고, 커밋되지 않은 파일만 로컬에 복사해 둡니다.
 2. **ready**로 에이전트가 구현한 파일을 알립니다.
 3. 에이전트가 멈추면 **Stop 훅**이 설정한 검사를 실행합니다. 모두 통과할 때만 리뷰를 요청합니다. 같은 세션이 리뷰하거나(`session`), 별도의 `claude`·`codex` CLI 프로세스가 독립적으로 리뷰합니다(`claude-cli`, `codex-cli`).
 4. 리뷰 결과는 변경 내용에 맞춰 검증되는 JSON입니다. 모든 지적에는 변경 범위 안의 파일과 줄, 근거, 영향, 최소 수정안이 있어야 합니다.
-5. 에이전트는 답변 끝에 평가 질문을 붙입니다. 책임자가 답하면 평가가 **원장(ledger)**에 저장됩니다. 원장은 실행마다 작은 JSON 파일 하나이고, 커밋해서 팀이 함께 씁니다. 소스 스냅샷은 로컬에만 남습니다.
+5. 에이전트는 답변 끝에 평가 질문을 붙입니다. 책임자가 답하면 평가가 **원장(ledger)**에 저장됩니다. 원장은 실행마다 작은 JSON 파일 하나이고, 커밋해서 팀이 함께 씁니다. 리뷰한 소스는 로컬에만 남습니다.
 6. **stats**가 스킬 버전과 리뷰어별로 평가를 묶고, 최근 구간을 확인합니다.
 
 ## 설치
@@ -72,7 +72,7 @@ cp node_modules/rated-review-loop/examples/codex-hooks.json .codex/hooks.json
 .rated-review-loop/local/
 ```
 
-`.rated-review-loop/ledger/`는 커밋하세요. 지적 제목, 근거 규칙, 평가만 담기고 소스 코드는 들어가지 않습니다.
+`.rated-review-loop/ledger/`는 커밋하세요. 지적 제목, 근거 규칙, 평가만 담기고 소스 코드는 들어가지 않습니다. 끝난 지 14일이 지난 로컬 실행 기록은 다음 `begin` 때 지워지고, `prune`으로 직접 지울 수도 있습니다.
 
 ### 4. PR에서 리뷰 건강도 확인
 
@@ -149,6 +149,7 @@ rated-review-loop rate <run-id> <F#> <label> [note]     Record the owner's ratin
 rated-review-loop status <session-key>                  Show the run bound to a session
 rated-review-loop cancel <session-key>                  Cancel the run bound to a session
 rated-review-loop stats [--format json|text|markdown]   Usefulness per skill version and reviewer
+rated-review-loop prune [--days <n>]                    Delete local runs finished more than n days ago (default 14)
 ```
 
 ## 한계

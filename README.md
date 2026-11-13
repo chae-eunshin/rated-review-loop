@@ -24,11 +24,11 @@ begin ──► implement ──► ready ──► [Stop hook] checks ──►
                                                         or claude/codex CLI
 ```
 
-1. **begin** snapshots the files in scope, so edits that existed before the task are not attributed to the agent.
+1. **begin** records a content id (git blob id) for every file in scope, so edits that existed before the task are not attributed to the agent. Unchanged tracked files are not read; only uncommitted files are copied locally.
 2. **ready** lists the files the agent implemented.
 3. When the agent stops, the **Stop hook** runs your checks. Only if all pass does it ask for a review: either the same session reviews (`session`), or a separate `claude` / `codex` CLI process reviews independently (`claude-cli`, `codex-cli`).
 4. The review is a JSON report validated against the change: every finding needs a file and line inside the change, evidence, impact and a minimal fix.
-5. The agent ends its reply with a rating question. The owner answers, and the rating is stored in the **ledger**, one small JSON file per run, committed and shared by the team. Source snapshots stay local.
+5. The agent ends its reply with a rating question. The owner answers, and the rating is stored in the **ledger**, one small JSON file per run, committed and shared by the team. Reviewed source stays local.
 6. **stats** groups ratings by skill version and reviewer and checks the latest window.
 
 ## Install
@@ -72,7 +72,7 @@ Create `rated-review-loop.config.json` in the repository root. Every key is opti
 .rated-review-loop/local/
 ```
 
-Commit `.rated-review-loop/ledger/`. It contains finding titles, rules and ratings, never source code.
+Commit `.rated-review-loop/ledger/`. It contains finding titles, rules and ratings, never source code. Local runs that finished more than 14 days ago are deleted on the next `begin`, or on demand with `prune`.
 
 ### 4. Review health on pull requests
 
@@ -149,6 +149,7 @@ rated-review-loop rate <run-id> <F#> <label> [note]     Record the owner's ratin
 rated-review-loop status <session-key>                  Show the run bound to a session
 rated-review-loop cancel <session-key>                  Cancel the run bound to a session
 rated-review-loop stats [--format json|text|markdown]   Usefulness per skill version and reviewer
+rated-review-loop prune [--days <n>]                    Delete local runs finished more than n days ago (default 14)
 ```
 
 ## Limitations
