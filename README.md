@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/assets/banner.png" alt="rated-review-loop: AI reviews the code. Humans rate the review." width="100%">
+</p>
+
 # rated-review-loop
 
 English | [한국어](./README-ko_kr.md)

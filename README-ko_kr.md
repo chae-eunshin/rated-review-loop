@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/assets/banner.png" alt="rated-review-loop: AI가 코드를 리뷰하고, 사람이 그 리뷰를 평가합니다." width="100%">
+</p>
+
 # rated-review-loop
 
 [English](./README.md) | 한국어
