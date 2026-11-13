@@ -9,6 +9,7 @@ import {
   createContext,
   handleStop,
   packet,
+  prune,
   rate,
   ready,
   sessionContext,
@@ -33,7 +34,8 @@ const USAGE = `Usage: rated-review-loop <command>
   rate <run-id> <F#> <label> [note]     Record the owner's rating of a finding
   status <session-key>                  Show the run bound to a session
   cancel <session-key>                  Cancel the run bound to a session
-  stats [--format json|text|markdown]   Usefulness per skill version and reviewer`;
+  stats [--format json|text|markdown]   Usefulness per skill version and reviewer
+  prune [--days <n>]                    Delete local runs finished more than n days ago (default 14)`;
 
 function gitRoot(cwd: string): string {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
@@ -87,6 +89,10 @@ function runCommand(command: string | undefined, args: string[]): unknown {
       return status(ctx, required(args[0], "session-key"));
     case "cancel":
       return cancel(ctx, required(args[0], "session-key"));
+    case "prune": {
+      const days = option(args, "--days");
+      return days === undefined ? prune(ctx) : prune(ctx, Number(days));
+    }
     case "stats": {
       const stats = computeStats(ctx.ledger.all(), ctx.config);
       const format = option(args, "--format") ?? "json";
