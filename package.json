@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Review AI-written code in a loop, let the owner rate every finding, and alert when review usefulness drops.",
   "license": "MIT",
+  "author": "chae-eunshin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chae-eunshin/rated-review-loop.git"
+  },
+  "homepage": "https://github.com/chae-eunshin/rated-review-loop#readme",
+  "bugs": {
+    "url": "https://github.com/chae-eunshin/rated-review-loop/issues"
+  },
   "type": "module",
   "bin": {
     "rated-review-loop": "./dist/cli.js"
