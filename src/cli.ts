@@ -17,9 +17,9 @@ import {
   submit,
   type Context,
   type HookOutput,
-  type StopEvent,
 } from "./cycle.ts";
 import { reviewWithCli } from "./review.ts";
+import { describeIssue, HookEventSchema } from "./schemas.ts";
 import { computeStats, formatMarkdown, formatText } from "./stats.ts";
 import { isClient, type Client } from "./types.ts";
 
@@ -62,9 +62,14 @@ function gitUser(root: string): string {
 function runHook(args: string[]): HookOutput {
   const client = option(args, "--client");
   if (client === undefined || !isClient(client)) throw new Error("hook needs --client claude or --client codex.");
-  const event = JSON.parse(readFileSync(0, "utf8")) as StopEvent & { hook_event_name?: string; cwd?: string };
+  const raw: unknown = JSON.parse(readFileSync(0, "utf8"));
+  // Other events may be routed here by a broad hook config; they are not ours to validate.
+  const name = typeof raw === "object" && raw !== null && "hook_event_name" in raw ? raw.hook_event_name : undefined;
+  if (name !== "SessionStart" && name !== "Stop") return {};
+  const parsed = HookEventSchema.safeParse(raw);
+  if (!parsed.success) throw new Error(`unexpected ${name} hook input (${describeIssue(parsed.error)})`);
+  const event = parsed.data;
   if (event.hook_event_name === "SessionStart") return sessionContext(event.session_id);
-  if (event.hook_event_name !== "Stop") return {};
   const root = gitRoot(event.cwd ?? process.cwd());
   return handleStop(createContext(root, loadConfig(root)), event, client satisfies Client);
 }

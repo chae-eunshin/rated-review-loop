@@ -14,7 +14,10 @@ import {
 import { dirname, join } from "node:path";
 import picomatch from "picomatch";
 
+import { z } from "zod";
+
 import { skillPath, type Config } from "./config.ts";
+import { describeIssue, LedgerEntrySchema, RunSchema, SessionBindingSchema } from "./schemas.ts";
 import { FINISHED_PHASES, RUN_SCHEMA_VERSION, type LedgerEntry, type Run } from "./types.ts";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -207,6 +210,17 @@ export function readWorkingText(root: string, path: string): string | null {
 }
 
 /** Local state lives under `localDir`; reviewed source and copies of uncommitted files stay out of git. */
+/** Runs from other schema versions are not errors: they are left behind by upgrades and treated as absent. */
+function isCurrentRun(raw: unknown): boolean {
+  return typeof raw === "object" && raw !== null && "schemaVersion" in raw && raw.schemaVersion === RUN_SCHEMA_VERSION;
+}
+
+const PruneViewSchema = z.object({
+  phase: z.string().optional(),
+  schemaVersion: z.unknown().optional(),
+  baseline: z.record(z.string(), z.string()).optional(),
+});
+
 export class LocalStore {
   private readonly base: string;
 
@@ -245,7 +259,8 @@ export class LocalStore {
     let removedRuns = 0;
     for (const name of existsSync(runs) ? readdirSync(runs).filter((file) => file.endsWith(".json")) : []) {
       const path = join(runs, name);
-      const run = readJson(path) as Partial<Run>;
+      // Pruning must not stop at one damaged file, so only the fields it needs are read, leniently.
+      const run: z.infer<typeof PruneViewSchema> = PruneViewSchema.safeParse(readJson(path)).data ?? {};
       const id = name.slice(0, -".json".length);
       if (FINISHED_PHASES.has(run.phase ?? "") && statSync(path).mtimeMs < cutoff) {
         rmSync(path, { force: true });
@@ -258,8 +273,8 @@ export class LocalStore {
     }
     const sessions = join(this.base, "sessions");
     for (const name of existsSync(sessions) ? readdirSync(sessions) : []) {
-      const { runId } = readJson(join(sessions, name)) as { runId: string };
-      if (!kept.has(runId)) rmSync(join(sessions, name), { force: true });
+      const runId = SessionBindingSchema.safeParse(readJson(join(sessions, name))).data?.runId;
+      if (runId === undefined || !kept.has(runId)) rmSync(join(sessions, name), { force: true });
     }
     const objects = join(this.base, "objects");
     let removedObjects = 0;
@@ -295,11 +310,15 @@ export class LocalStore {
   readRun(id: string): Run {
     const path = this.runPath(id);
     if (!existsSync(path)) throw new Error(`No run ${id}.`);
-    const run = readJson(path) as Partial<Run>;
-    if (run.schemaVersion !== RUN_SCHEMA_VERSION) {
+    const raw = readJson(path);
+    if (!isCurrentRun(raw)) {
       throw new Error(`Run ${id} was written by an older rated-review-loop and cannot be continued. Begin a new run.`);
     }
-    return run as Run;
+    const run = RunSchema.safeParse(raw);
+    if (!run.success) {
+      throw new Error(`Run ${id} is damaged (${describeIssue(run.error)}). Delete ${path} and begin a new run.`);
+    }
+    return run.data;
   }
 
   saveRun(run: Run): void {
@@ -310,15 +329,23 @@ export class LocalStore {
   active(key: string): Run | null {
     const path = this.sessionPath(key);
     if (!existsSync(path)) return null;
-    const { runId } = readJson(path) as { runId: string };
-    const runPath = this.runPath(runId);
-    if (!existsSync(runPath) || (readJson(runPath) as Partial<Run>).schemaVersion !== RUN_SCHEMA_VERSION) return null;
-    return this.readRun(runId);
+    const binding = SessionBindingSchema.safeParse(readJson(path));
+    if (!binding.success) throw new Error(`Session binding ${path} is damaged. Delete it to start over.`);
+    const runPath = this.runPath(binding.data.runId);
+    if (!existsSync(runPath) || !isCurrentRun(readJson(runPath))) return null;
+    return this.readRun(binding.data.runId);
   }
 
   bind(key: string, runId: string): void {
     writeJsonAtomic(this.sessionPath(key), { runId });
   }
+}
+
+/** The ledger is edited by teammates and merged by git, so a damaged entry names its file instead of skewing statistics. */
+function parseLedgerEntry(path: string): LedgerEntry {
+  const entry = LedgerEntrySchema.safeParse(readJson(path));
+  if (!entry.success) throw new Error(`Ledger entry ${path} is invalid (${describeIssue(entry.error)}).`);
+  return entry.data;
 }
 
 /** The ledger is committed and shared by the team: one file per run, so teammates rarely conflict. */
@@ -337,7 +364,7 @@ export class Ledger {
   read(runId: string): LedgerEntry {
     const path = this.path(runId);
     if (!existsSync(path)) throw new Error(`No ledger entry for run ${runId}.`);
-    return readJson(path) as LedgerEntry;
+    return parseLedgerEntry(path);
   }
 
   write(entry: LedgerEntry): void {
@@ -349,6 +376,6 @@ export class Ledger {
     return readdirSync(this.base)
       .filter((name) => name.endsWith(".json"))
       .sort()
-      .map((name) => readJson(join(this.base, name)) as LedgerEntry);
+      .map((name) => parseLedgerEntry(join(this.base, name)));
   }
 }

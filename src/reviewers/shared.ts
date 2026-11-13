@@ -37,30 +37,8 @@ export interface CliReviewer {
 }
 
 
-export const REPORT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["summary", "findings"],
-  properties: {
-    summary: { type: "string" },
-    findings: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["file", "line", "title", "rule", "impact", "suggestion"],
-        properties: {
-          file: { type: "string" },
-          line: { type: "integer" },
-          title: { type: "string" },
-          rule: { type: "string" },
-          impact: { type: "string" },
-          suggestion: { type: "string" },
-        },
-      },
-    },
-  },
-} as const;
+/** The report shape the CLIs must produce, generated from the same schema `submit` validates with. */
+export { REPORT_JSON_SCHEMA as REPORT_SCHEMA } from "../schemas.ts";
 
 export function reviewPrompt(root: string, config: Config, packetPath: string): string {
   const guidelines = config.guidelines.length

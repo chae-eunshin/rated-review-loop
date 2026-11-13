@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { begin, cancel, handleStop, rate, ready, submit } from "../src/cycle.ts";
 import { sessionKey } from "../src/store.ts";
-import { createRepo, failingChecks, passingChecks, type Repo } from "./helpers.ts";
+import { createRepo, failingChecks, passingChecks, runIn, type Repo } from "./helpers.ts";
 
 const SESSION = "session-A";
 const key = sessionKey(SESSION);
@@ -37,8 +37,7 @@ describe("review cycle", () => {
     const { ctx, runId, output } = reachReview();
     expect(output.decision).toBe("block");
     expect(output.reason).toContain(`packet ${runId}`);
-    const run = ctx.store.readRun(runId);
-    expect(run.phase).toBe("awaiting-review");
+    const run = runIn(ctx.store.readRun(runId), ["awaiting-review"]);
     expect(run.reviewer).toEqual({ client: "claude", model: "unknown" });
     expect(run.changes).toEqual([
       { path: "src/value.ts", before: "export const value = 1;\n", after: "export const value = 2;\n" },
@@ -61,7 +60,7 @@ describe("review cycle", () => {
     const { runId } = begin(ctx, key, "no-op");
     const result = ready(ctx, key, ["src/value.ts"]);
     expect(result.phase).toBe("skipped");
-    expect(ctx.store.readRun(runId).files).toEqual([]);
+    expect(runIn(ctx.store.readRun(runId), ["skipped"]).files).toEqual([]);
   });
 
   it("leaves binary and oversized files out of the review and reports them", () => {
@@ -78,7 +77,7 @@ describe("review cycle", () => {
       files: ["src/value.ts"],
       notReviewable: ["logo.png", "big.txt"],
     });
-    expect(ctx.store.readRun(runId).changes?.map((change) => change.path)).toEqual(["src/value.ts"]);
+    expect(runIn(ctx.store.readRun(runId), ["ready"]).changes.map((change) => change.path)).toEqual(["src/value.ts"]);
   });
 
   it("skips the review when only unreviewable files changed", () => {
@@ -106,7 +105,7 @@ describe("review cycle", () => {
     repo.write("src/value.ts", "export const value = 20;\n");
     repo.write("src/new.ts", "export const fresh = 2;\n");
     const { runId } = ready(ctx, key, ["src/value.ts", "src/new.ts"]);
-    expect(ctx.store.readRun(runId).changes).toEqual([
+    expect(runIn(ctx.store.readRun(runId), ["ready"]).changes).toEqual([
       { path: "src/value.ts", before: "export const value = 10;\n", after: "export const value = 20;\n" },
       { path: "src/new.ts", before: "export const fresh = 1;\n", after: "export const fresh = 2;\n" },
     ]);
@@ -126,7 +125,7 @@ describe("review cycle", () => {
     rmSync(join(repo.root, "src/value.ts"));
     repo.write("src/moved.ts", "export const value = 1;\n");
     const { runId } = ready(ctx, key, ["src/value.ts", "src/moved.ts"]);
-    expect(ctx.store.readRun(runId).changes).toEqual([
+    expect(runIn(ctx.store.readRun(runId), ["ready"]).changes).toEqual([
       { path: "src/value.ts", before: "export const value = 1;\n", after: null },
       { path: "src/moved.ts", before: null, after: "export const value = 1;\n" },
     ]);
@@ -167,7 +166,7 @@ describe("review cycle", () => {
     repo.write("src/value.ts", "export const value = 2;\n");
     ready(ctx, key, ["src/value.ts"]);
     handleStop(ctx, { session_id: SESSION, transcript_path: transcript }, "claude", passingChecks);
-    expect(ctx.store.readRun(runId).reviewer).toEqual({ client: "claude", model: "claude-test-1" });
+    expect(runIn(ctx.store.readRun(runId), ["awaiting-review"]).reviewer).toEqual({ client: "claude", model: "claude-test-1" });
   });
 });
 
@@ -212,7 +211,7 @@ describe("rating question", () => {
     expect(first.decision).toBe("block");
     const second = handleStop(ctx, { session_id: SESSION, last_assistant_message: "done" }, "claude", passingChecks);
     expect(second.decision).toBeUndefined();
-    expect(ctx.store.readRun(runId).evaluationRequest?.status).toBe("missed");
+    expect(runIn(ctx.store.readRun(runId), ["completed"]).evaluationRequest?.status).toBe("missed");
   });
 
   it("accepts the question when it appears verbatim, ignoring whitespace", () => {
@@ -220,7 +219,7 @@ describe("rating question", () => {
     const { evaluationQuestion } = submit(ctx, runId, { summary: "ok", findings: [finding] });
     const message = `Report.\n\n${String(evaluationQuestion).replace(/ /g, "  ")}`;
     expect(handleStop(ctx, { session_id: SESSION, last_assistant_message: message }, "claude", passingChecks)).toEqual({});
-    expect(ctx.store.readRun(runId).evaluationRequest?.status).toBe("asked");
+    expect(runIn(ctx.store.readRun(runId), ["completed"]).evaluationRequest?.status).toBe("asked");
   });
 
   it("does not ask when there are no findings", () => {
