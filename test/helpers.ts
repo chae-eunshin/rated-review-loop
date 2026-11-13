@@ -5,7 +5,13 @@ import { dirname, join } from "node:path";
 
 import { parseConfig, type Config } from "../src/config.ts";
 import { createContext, type Context } from "../src/cycle.ts";
-import type { CheckResult, LedgerEntry } from "../src/types.ts";
+import { inPhase, type CheckResult, type LedgerEntry, type Phase, type Run, type RunIn } from "../src/types.ts";
+
+/** Narrows a run read back from disk, failing the test with the actual phase when it is not one of `phases`. */
+export function runIn<const P extends Phase>(run: Run, phases: readonly P[]): RunIn<P> {
+  if (!inPhase(run, phases)) throw new Error(`Expected the run to be ${phases.join(" or ")}, but it is ${run.phase}.`);
+  return run;
+}
 
 export interface Repo {
   root: string;

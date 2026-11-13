@@ -1,5 +1,23 @@
+import type { z } from "zod";
+
+import {
+  CLIENTS,
+  LABELS,
+  type ChangeSchema,
+  type CheckResultSchema,
+  type EvaluationSchema,
+  type FindingSchema,
+  type HookEventSchema,
+  type LedgerEntrySchema,
+  type ReportedFindingSchema,
+  type ReviewerSchema,
+  type ReviewReportSchema,
+  type RunSchema,
+} from "./schemas.ts";
+
+export { CLIENTS, LABELS, QUESTION_STATUSES, RUN_SCHEMA_VERSION } from "./schemas.ts";
+
 /** How the owner judged a single finding. */
-export const LABELS = ["useful", "out-of-scope", "unsupported", "incorrect", "deferred"] as const;
 export type Label = (typeof LABELS)[number];
 
 export function isLabel(value: string): value is Label {
@@ -7,110 +25,39 @@ export function isLabel(value: string): value is Label {
 }
 
 /** The coding agents whose sessions or CLIs can review. */
-export const CLIENTS = ["claude", "codex"] as const;
 export type Client = (typeof CLIENTS)[number];
 
 export function isClient(value: string): value is Client {
   return (CLIENTS as readonly string[]).includes(value);
 }
 
-export interface Reviewer {
-  client: Client;
-  /** Model id reported by the client, or "unknown" when it cannot be observed. */
-  model: string;
-}
+export type Reviewer = z.infer<typeof ReviewerSchema>;
+export type ReportedFinding = z.infer<typeof ReportedFindingSchema>;
+export type ReviewReport = z.infer<typeof ReviewReportSchema>;
+export type Finding = z.infer<typeof FindingSchema>;
+export type Evaluation = z.infer<typeof EvaluationSchema>;
+export type CheckResult = z.infer<typeof CheckResultSchema>;
+export type Change = z.infer<typeof ChangeSchema>;
+export type LedgerEntry = z.infer<typeof LedgerEntrySchema>;
+export type HookEvent = z.infer<typeof HookEventSchema>;
+export type StopEvent = Extract<HookEvent, { hook_event_name: "Stop" }>;
 
-/** A finding as the reviewer writes it. */
-export interface ReportedFinding {
-  file: string;
-  line: number;
-  title: string;
-  rule: string;
-  impact: string;
-  suggestion: string;
-}
+/** One review cycle. Each group of phases carries exactly the data that exists at that point. */
+export type Run = z.infer<typeof RunSchema>;
+export type Phase = Run["phase"];
 
-export interface ReviewReport {
-  summary: string;
-  findings: ReportedFinding[];
-}
+/**
+ * The run narrowed to some phases. Several phases share one shape (ready, checking, checks-failed, stale,
+ * skipped), so this intersects rather than `Extract`s: the shared shape is kept with `phase` narrowed.
+ */
+export type RunIn<P extends Phase> = Run & { phase: P };
 
-export interface Finding extends ReportedFinding {
-  /** F1, F2, ... in report order. */
-  id: string;
+export function inPhase<const P extends Phase>(run: Run, phases: readonly P[]): run is RunIn<P> {
+  return (phases as readonly Phase[]).includes(run.phase);
 }
-
-export interface Evaluation {
-  findingId: string;
-  label: Label;
-  note: string;
-  at: string;
-  by: string;
-}
-
-export interface CheckResult {
-  command: string;
-  exitCode: number | null;
-  durationMs: number;
-  output: string;
-}
-
-export interface Change {
-  path: string;
-  before: string | null;
-  after: string | null;
-}
-
-export type Phase =
-  | "implementing"
-  | "ready"
-  | "checking"
-  | "checks-failed"
-  | "stale"
-  | "awaiting-review"
-  | "completed"
-  | "skipped"
-  | "cancelled";
 
 /** Runs in these phases are over; `prune` may delete them. */
 export const FINISHED_PHASES: ReadonlySet<string> = new Set<Phase>(["completed", "skipped", "cancelled"]);
 
-export type QuestionStatus = "pending" | "reminded" | "asked" | "resolved" | "missed";
-
-export const RUN_SCHEMA_VERSION = 2;
-
-/** Local working state of one review cycle. Holds the reviewed source, so it is never committed. */
-export interface Run {
-  schemaVersion: typeof RUN_SCHEMA_VERSION;
-  id: string;
-  key: string;
-  task: string;
-  phase: Phase;
-  skill: string;
-  startedAt: string;
-  /** Path → content id at `begin` (see `Snapshot`), not the content itself. */
-  baseline: Record<string, string>;
-  files: string[];
-  expectedFingerprint?: string;
-  checks: CheckResult[];
-  attempts: { at: string; checks: CheckResult[] }[];
-  changes?: Change[];
-  reviewer?: Reviewer;
-  reviewRequestedAt?: string;
-  completedAt?: string;
-  summary?: string;
-  findings: Finding[];
-  evaluationRequest?: { status: QuestionStatus; text?: string; at?: string };
-}
-
-/** The committed record of one completed review: findings and the owner's ratings, no source code. */
-export interface LedgerEntry {
-  schemaVersion: 1;
-  runId: string;
-  task: string;
-  completedAt: string;
-  skill: string;
-  reviewer: Reviewer;
-  findings: Pick<Finding, "id" | "file" | "line" | "title" | "rule">[];
-  evaluations: Evaluation[];
-}
+export type CompletedRun = RunIn<"completed">;
+export type QuestionStatus = NonNullable<CompletedRun["evaluationRequest"]>["status"];

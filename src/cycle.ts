@@ -16,20 +16,30 @@ import {
   skillVersion,
   snapshot,
 } from "./store.ts";
+import { describeIssue, ReviewReportSchema } from "./schemas.ts";
 import { modelFromTranscript } from "./transcript.ts";
 import {
   FINISHED_PHASES,
+  inPhase,
   isLabel,
   LABELS,
   RUN_SCHEMA_VERSION,
   type Change,
   type Client,
+  type CompletedRun,
   type Finding,
   type LedgerEntry,
   type ReviewReport,
   type Reviewer,
   type Run,
+  type RunIn,
+  type StopEvent,
 } from "./types.ts";
+
+export type { StopEvent } from "./types.ts";
+
+/** What the Stop handling reads from a Stop event; the event name was already used to route it here. */
+export type StopInput = Omit<StopEvent, "hook_event_name">;
 
 export const BIN = "npx rated-review-loop";
 
@@ -52,11 +62,15 @@ export interface HookOutput {
   hookSpecificOutput?: { hookEventName: "SessionStart"; additionalContext: string };
 }
 
-export interface StopEvent {
-  session_id: string;
-  stop_hook_active?: boolean;
-  last_assistant_message?: string;
-  transcript_path?: string;
+/** Phases whose files under review are fixed but no review was requested yet. */
+type PreparedRun = RunIn<"ready" | "checking" | "checks-failed" | "stale" | "skipped">;
+/** Every run that went through `ready`, so it has a change set and a fingerprint. */
+type ReadiedRun = PreparedRun | RunIn<"awaiting-review" | "completed">;
+
+/** The fields every phase has. Moving to another group of phases starts from these, so nothing stale carries over. */
+function base(run: Run): Omit<RunIn<"implementing">, "phase"> {
+  const { schemaVersion, id, key, task, skill, startedAt, baseline, checks, attempts } = run;
+  return { schemaVersion, id, key, task, skill, startedAt, baseline, checks, attempts };
 }
 
 const now = (): string => new Date().toISOString();
@@ -81,10 +95,8 @@ export function begin(ctx: Context, key: string, task: string): { runId: string;
     startedAt: now(),
     // Files that were already dirty are part of the baseline, so earlier human edits are not attributed to the AI.
     baseline: captureBaseline(ctx.root, ctx.config, ctx.store),
-    files: [],
     checks: [],
     attempts: [],
-    findings: [],
   };
   ctx.store.saveRun(run);
   ctx.store.bind(key, run.id);
@@ -101,7 +113,7 @@ export interface ReadyResult {
 
 export function ready(ctx: Context, key: string, files: string[]): ReadyResult {
   const run = ctx.store.active(key);
-  if (!run || !["implementing", "checks-failed", "stale"].includes(run.phase)) {
+  if (!run || !inPhase(run, ["implementing", "checks-failed", "stale"])) {
     throw new Error("ready is only valid after begin, while implementing.");
   }
   if (!files.length) throw new Error("List the files you implemented.");
@@ -117,12 +129,15 @@ export function ready(ctx: Context, key: string, files: string[]): ReadyResult {
     if (change === null) notReviewable.push(path);
     else changes.push(change);
   }
-  run.files = changes.map((change) => change.path);
-  run.changes = changes;
-  run.phase = run.files.length ? "ready" : "skipped";
-  run.expectedFingerprint = fingerprint(current);
-  ctx.store.saveRun(run);
-  return { runId: run.id, phase: run.phase, files: run.files, notReviewable };
+  const next: PreparedRun = {
+    ...base(run),
+    phase: changes.length ? "ready" : "skipped",
+    files: changes.map((change) => change.path),
+    changes,
+    expectedFingerprint: fingerprint(current),
+  };
+  ctx.store.saveRun(next);
+  return { runId: next.id, phase: next.phase, files: next.files, notReviewable };
 }
 
 /** The change to review, or `null` when either side is binary or too large to review. */
@@ -145,14 +160,14 @@ export function prune(ctx: Context, days = PRUNE_AFTER_DAYS): { runs: number; ob
   return ctx.store.prune(days);
 }
 
-function changed(ctx: Context, run: Run): boolean {
+function changed(ctx: Context, run: ReadiedRun): boolean {
   return (
     fingerprint(snapshot(ctx.root, ctx.config)) !== run.expectedFingerprint ||
     skillVersion(ctx.root, ctx.config) !== run.skill
   );
 }
 
-export function handleStop(ctx: Context, event: StopEvent, client: Client, check: CheckRunner = runChecks): HookOutput {
+export function handleStop(ctx: Context, event: StopInput, client: Client, check: CheckRunner = runChecks): HookOutput {
   const key = sessionKey(event.session_id);
   const run = ctx.store.active(key);
   if (run?.phase === "completed") return ensureQuestion(ctx, run, event);
@@ -181,8 +196,8 @@ export function handleStop(ctx: Context, event: StopEvent, client: Client, check
 
 function verifyAndRequestReview(
   ctx: Context,
-  run: Run,
-  event: StopEvent,
+  run: PreparedRun,
+  event: StopInput,
   client: Client,
   check: CheckRunner,
 ): HookOutput {
@@ -207,15 +222,19 @@ function verifyAndRequestReview(
       systemMessage: `Review skipped: ${run.phase}. Check results: ${BIN} status ${run.key}. Do not report the work as done; look at the failing checks.`,
     };
   }
-  run.phase = "awaiting-review";
-  run.reviewRequestedAt = now();
   const cliClient = clientOfMode(ctx.config.reviewer.mode);
-  if (cliClient === null) run.reviewer = { client, model: modelFromTranscript(event.transcript_path) };
-  ctx.store.saveRun(run);
-  return { decision: "block", reason: reviewRequest(ctx, run, cliClient) };
+  const next: RunIn<"awaiting-review"> = {
+    ...run,
+    phase: "awaiting-review",
+    reviewRequestedAt: now(),
+    // A session reviewer is the agent in this hook; a CLI reviewer is only known when it reports.
+    ...(cliClient === null ? { reviewer: { client, model: modelFromTranscript(event.transcript_path) } } : {}),
+  };
+  ctx.store.saveRun(next);
+  return { decision: "block", reason: reviewRequest(ctx, next, cliClient) };
 }
 
-function reviewRequest(ctx: Context, run: Run, cliClient: Client | null): string {
+function reviewRequest(ctx: Context, run: Pick<Run, "id">, cliClient: Client | null): string {
   if (cliClient !== null) {
     return [
       `Checks passed. Run \`${BIN} review ${run.id}\`; it asks ${cliClient} to review the change and records the findings.`,
@@ -242,31 +261,31 @@ export function packet(ctx: Context, id: string): object {
     skill: run.skill,
     language: ctx.config.language,
     guidelines: ctx.config.guidelines,
-    changes: run.changes ?? [],
+    changes: "changes" in run ? run.changes : [],
     checks: run.checks.map(({ command, exitCode }) => ({ command, exitCode })),
   };
 }
 
+/** Checks the shape with the shared schema, then what a schema cannot know: that each finding points into the change. */
 export function validateReport(run: Run, report: unknown): ReviewReport {
-  const value = report as Partial<ReviewReport> | null;
-  if (typeof value?.summary !== "string" || !value.summary.trim() || !Array.isArray(value.findings)) {
-    throw new Error("The report needs a summary string and a findings array.");
-  }
-  for (const finding of value.findings as unknown[]) {
-    const item = finding as Partial<Record<keyof Finding, unknown>> | null;
-    const change = run.changes?.find((candidate) => candidate.path === item?.file);
-    const lines = (change?.after ?? change?.before ?? "").split("\n").length;
-    const textual = (["title", "rule", "impact", "suggestion"] as const).every(
-      (field) => typeof item?.[field] === "string" && item[field].trim() !== "",
+  const parsed = ReviewReportSchema.safeParse(report);
+  if (!parsed.success) {
+    throw new Error(
+      `The report is invalid (${describeIssue(parsed.error)}). It needs a summary and findings with file, line, title, rule, impact, suggestion.`,
     );
-    if (!change || !Number.isInteger(item?.line) || (item?.line as number) < 1 || (item?.line as number) > lines || !textual) {
-      throw new Error("Each finding needs file/line inside the change and non-empty title, rule, impact, suggestion.");
+  }
+  const changes = "changes" in run ? run.changes : [];
+  for (const finding of parsed.data.findings) {
+    const change = changes.find((candidate) => candidate.path === finding.file);
+    const lines = (change?.after ?? change?.before ?? "").split("\n").length;
+    if (!change || finding.line > lines) {
+      throw new Error(`Finding at ${finding.file}:${finding.line} is not inside the change under review.`);
     }
   }
-  return value as ReviewReport;
+  return parsed.data;
 }
 
-export function evaluationQuestion(run: Pick<Run, "id" | "findings">, entry: Pick<LedgerEntry, "evaluations">): string | null {
+export function evaluationQuestion(run: Pick<CompletedRun, "id" | "findings">, entry: Pick<LedgerEntry, "evaluations">): string | null {
   const pending = run.findings.filter((finding) => !entry.evaluations.some((item) => item.findingId === finding.id));
   if (!pending.length) return null;
   const list = pending.map((finding) => `${finding.id} “${finding.title}”`).join(", ");
@@ -283,15 +302,14 @@ export function submit(ctx: Context, id: string, report: unknown, reviewer?: Rev
   const run = ctx.store.readRun(id);
   if (run.phase !== "awaiting-review") throw new Error("This run is not awaiting review.");
   if (changed(ctx, run)) {
-    run.phase = "stale";
-    ctx.store.saveRun(run);
+    const { files, changes, expectedFingerprint } = run;
+    ctx.store.saveRun({ ...base(run), phase: "stale", files, changes, expectedFingerprint });
     throw new Error("Code changed during the review. Run ready again.");
   }
   const valid = validateReport(run, report);
   const by = reviewer ?? run.reviewer;
   if (!by) throw new Error("The reviewer of this run is unknown.");
-  run.reviewer = by;
-  run.findings = valid.findings.map(({ file, line, title, rule, impact, suggestion }, index) => ({
+  const findings: Finding[] = valid.findings.map(({ file, line, title, rule, impact, suggestion }, index) => ({
     id: `F${index + 1}`,
     file,
     line,
@@ -300,24 +318,30 @@ export function submit(ctx: Context, id: string, report: unknown, reviewer?: Rev
     impact,
     suggestion,
   }));
-  run.summary = valid.summary;
-  run.phase = "completed";
-  run.completedAt = now();
+  const completedAt = now();
   const entry: LedgerEntry = {
     schemaVersion: 1,
     runId: run.id,
     task: run.task,
-    completedAt: run.completedAt,
+    completedAt,
     skill: run.skill,
     reviewer: by,
-    findings: run.findings.map(({ id: findingId, file, line, title, rule }) => ({ id: findingId, file, line, title, rule })),
+    findings: findings.map(({ id: findingId, file, line, title, rule }) => ({ id: findingId, file, line, title, rule })),
     evaluations: [],
   };
-  const question = evaluationQuestion(run, entry);
-  if (question !== null) run.evaluationRequest = { status: "pending", text: question };
+  const question = evaluationQuestion({ id: run.id, findings }, entry);
+  const completed: CompletedRun = {
+    ...run,
+    phase: "completed",
+    reviewer: by,
+    summary: valid.summary,
+    completedAt,
+    findings,
+    ...(question !== null ? { evaluationRequest: { status: "pending", text: question } } : {}),
+  };
   ctx.ledger.write(entry);
-  ctx.store.saveRun(run);
-  return { runId: id, findings: run.findings, evaluationQuestion: question };
+  ctx.store.saveRun(completed);
+  return { runId: id, findings, evaluationQuestion: question };
 }
 
 /** Records the owner's rating. Earlier ratings stay as history; statistics use the latest one. */
@@ -334,9 +358,8 @@ export function cancel(ctx: Context, key: string): { runId: string; phase: strin
   const run = ctx.store.active(key);
   if (!run) throw new Error("No run in progress.");
   if (run.phase === "completed") throw new Error("Completed runs are kept.");
-  run.phase = "cancelled";
-  ctx.store.saveRun(run);
-  return { runId: run.id, phase: run.phase };
+  ctx.store.saveRun({ ...base(run), phase: "cancelled" });
+  return { runId: run.id, phase: "cancelled" };
 }
 
 export function status(ctx: Context, key: string): object | null {
@@ -345,15 +368,15 @@ export function status(ctx: Context, key: string): object | null {
   return {
     runId: run.id,
     phase: run.phase,
-    files: run.files,
+    files: "files" in run ? run.files : [],
     checks: run.checks,
-    reviewer: run.reviewer ?? null,
-    findings: run.findings,
-    evaluationRequest: run.evaluationRequest ?? null,
+    reviewer: "reviewer" in run ? (run.reviewer ?? null) : null,
+    findings: run.phase === "completed" ? run.findings : [],
+    evaluationRequest: run.phase === "completed" ? (run.evaluationRequest ?? null) : null,
   };
 }
 
-function ensureQuestion(ctx: Context, run: Run, event: StopEvent): HookOutput {
+function ensureQuestion(ctx: Context, run: CompletedRun, event: StopInput): HookOutput {
   const request = run.evaluationRequest;
   // Runs from older versions or already asked questions must not block later conversation.
   if (!request || ["asked", "resolved", "missed"].includes(request.status)) return {};
