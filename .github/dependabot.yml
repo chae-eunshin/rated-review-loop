@@ -1,15 +1,28 @@
-# Keeps GitHub Actions and npm dependencies current, so a deprecated runtime is caught by a pull request
-# instead of a workflow warning.
+# Monthly, grouped version updates: at most one pull request per ecosystem per month. Security fixes come
+# separately and immediately through Dependabot security updates (repository setting).
 version: 2
 updates:
+  # Actions stop working when GitHub drops their runtime (as with Node 20), so they are worth tracking.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     groups:
-      dev-dependencies:
-        dependency-type: development
+      npm:
+        patterns: ["*"]
+    ignore:
+      # Node types follow the oldest supported Node (engines: >=22). Newer majors would type-check APIs that
+      # Node 22 users do not have.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # typescript-eslint supports TypeScript < 6.1 (typescript-eslint#10940). Move to TypeScript 7 by hand
+      # once it does.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
