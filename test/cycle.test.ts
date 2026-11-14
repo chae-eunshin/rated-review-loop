@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
+import { BUNDLED_SKILL, parseConfig } from "../src/config.ts";
 import {
   begin,
   cancel,
+  createContext,
   handleStop,
   packet,
   rate,
@@ -179,6 +181,38 @@ describe("review cycle", () => {
     ready(ctx, key, ["src/value.ts"]);
     handleStop(ctx, { session_id: SESSION, transcript_path: transcript }, "claude", passingChecks);
     expect(runIn(ctx.store.readRun(runId), ["awaiting-review"]).reviewer).toEqual({ client: "claude", model: "claude-test-1" });
+  });
+});
+
+describe("review request", () => {
+  it("names a report file outside the review scope, and a report written there can be submitted", () => {
+    const { ctx, runId, output } = reachReview();
+    const reportPath = `.rated-review-loop/local/work/${runId}/report.json`;
+    expect(output.reason).toContain(`Write the result JSON to ${reportPath}`);
+    expect(output.reason).toContain(`submit ${runId} ${reportPath}`);
+    writeFileSync(join(repo.root, reportPath), JSON.stringify({ summary: "ok", findings: [finding] }));
+    const report: unknown = JSON.parse(readFileSync(join(repo.root, reportPath), "utf8"));
+    expect(submit(ctx, runId, report).findings).toHaveLength(1);
+  });
+
+  it("rejects the review as stale when the report is saved inside the review scope", () => {
+    const { ctx, runId } = reachReview();
+    repo.write("review.json", JSON.stringify({ summary: "ok", findings: [] }));
+    expect(() => submit(ctx, runId, { summary: "ok", findings: [] })).toThrow(/changed during the review/);
+  });
+
+  it("shows the bundled skill through the node_modules link, not the package manager's store path", () => {
+    const linked = join(repo.root, "node_modules/rated-review-loop/skills/review-completed-code");
+    mkdirSync(dirname(linked), { recursive: true });
+    symlinkSync(dirname(BUNDLED_SKILL), linked);
+    const ctx = createContext(repo.root, parseConfig({ checks: ["true"] }));
+    const { output } = reachReview(ctx);
+    expect(output.reason).toContain("Read node_modules/rated-review-loop/skills/review-completed-code/SKILL.md and");
+  });
+
+  it("shows a project skill relative to the repository", () => {
+    const { output } = reachReview();
+    expect(output.reason).toContain("Read skill.md and");
   });
 });
 

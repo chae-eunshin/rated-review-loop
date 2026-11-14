@@ -47,6 +47,8 @@ Do not treat drafts or skeletons as finished work, even when asked manually.
 ```
 
 `line` is the line in the file after the change; for a deleted file, use the line before the change.
+Write the report to the file the review request names. It is outside the review scope; a report saved anywhere
+else in the repository counts as a code change and makes `submit` reject the review as stale.
 A no-findings review does not prove the change is correct; do not describe it that way.
 
 ## After submitting

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CLIENTS, isClient, type Client } from "./types.ts";
@@ -149,6 +149,21 @@ export function loadConfig(root: string): Config {
 
 export function skillPath(root: string, config: Config): string {
   return isAbsolute(config.skill) ? config.skill : join(root, config.skill);
+}
+
+/** Where the installed package exposes the bundled skill, through the `node_modules` link package managers create. */
+const LINKED_SKILL = join("node_modules", "rated-review-loop", "skills", "review-completed-code", "SKILL.md");
+
+/**
+ * The skill path to show an agent: relative to the repository when possible. pnpm resolves the bundled skill into
+ * its store (`node_modules/.pnpm/<long name>/...`), so the `node_modules/rated-review-loop` link is preferred.
+ */
+export function skillDisplayPath(root: string, config: Config): string {
+  const actual = skillPath(root, config);
+  const linked = join(root, LINKED_SKILL);
+  if (existsSync(linked) && realpathSync(linked) === realpathSync(actual)) return LINKED_SKILL;
+  const inside = relative(root, actual);
+  return inside && !inside.startsWith("..") && !isAbsolute(inside) ? inside.split(sep).join("/") : actual;
 }
 
 export function clientOfMode(mode: ReviewerMode): Client | null {
