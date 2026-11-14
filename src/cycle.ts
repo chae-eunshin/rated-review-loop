@@ -25,10 +25,13 @@ import {
   LABELS,
   RUN_SCHEMA_VERSION,
   type Change,
+  type CheckResult,
   type Client,
   type CompletedRun,
   type Finding,
+  type Label,
   type LedgerEntry,
+  type Phase,
   type ReviewReport,
   type Reviewer,
   type Run,
@@ -78,7 +81,16 @@ const now = (): string => new Date().toISOString();
 /** Finished runs older than this are deleted from local storage by `begin` and `prune`. The ledger is never pruned. */
 export const PRUNE_AFTER_DAYS = 14;
 
-export function begin(ctx: Context, key: string, task: string): { runId: string; phase: string } {
+/**
+ * What a command prints, as JSON. The coding agent (or a CLI reviewer, for `packet`) reads these, so they are part
+ * of the public contract along with the config and ledger formats.
+ */
+export interface PhaseResult<P extends Phase = Phase> {
+  runId: string;
+  phase: P;
+}
+
+export function begin(ctx: Context, key: string, task: string): PhaseResult<"implementing"> {
   if (!task.trim()) throw new Error("A task description is required.");
   const previous = ctx.store.active(key);
   if (previous && !FINISHED_PHASES.has(previous.phase)) {
@@ -100,12 +112,11 @@ export function begin(ctx: Context, key: string, task: string): { runId: string;
   };
   ctx.store.saveRun(run);
   ctx.store.bind(key, run.id);
-  return { runId: run.id, phase: run.phase };
+  return { runId: run.id, phase: "implementing" };
 }
 
-export interface ReadyResult {
-  runId: string;
-  phase: string;
+export interface ReadyResult extends PhaseResult<"ready" | "skipped"> {
+  /** The files under review: the listed files that changed and can be reviewed. */
   files: string[];
   /** Changed files left out of the review because they are binary or larger than 2 MB. */
   notReviewable: string[];
@@ -129,15 +140,16 @@ export function ready(ctx: Context, key: string, files: string[]): ReadyResult {
     if (change === null) notReviewable.push(path);
     else changes.push(change);
   }
+  const phase = changes.length ? "ready" : "skipped";
   const next: PreparedRun = {
     ...base(run),
-    phase: changes.length ? "ready" : "skipped",
+    phase,
     files: changes.map((change) => change.path),
     changes,
     expectedFingerprint: fingerprint(current),
   };
   ctx.store.saveRun(next);
-  return { runId: next.id, phase: next.phase, files: next.files, notReviewable };
+  return { runId: next.id, phase, files: next.files, notReviewable };
 }
 
 /** The change to review, or `null` when either side is binary or too large to review. */
@@ -252,7 +264,19 @@ function reviewRequest(ctx: Context, run: Pick<Run, "id">, cliClient: Client | n
   ].join(" ");
 }
 
-export function packet(ctx: Context, id: string): object {
+/** The change under review and what it was checked with. A CLI reviewer reads this as a file. */
+export interface Packet {
+  runId: string;
+  task: string;
+  phase: Phase;
+  skill: string;
+  language: string;
+  guidelines: string[];
+  changes: Change[];
+  checks: Pick<CheckResult, "command" | "exitCode">[];
+}
+
+export function packet(ctx: Context, id: string): Packet {
   const run = ctx.store.readRun(id);
   return {
     runId: run.id,
@@ -345,7 +369,13 @@ export function submit(ctx: Context, id: string, report: unknown, reviewer?: Rev
 }
 
 /** Records the owner's rating. Earlier ratings stay as history; statistics use the latest one. */
-export function rate(ctx: Context, id: string, findingId: string, label: string, note: string, by: string): object {
+export interface RateResult {
+  runId: string;
+  findingId: string;
+  label: Label;
+}
+
+export function rate(ctx: Context, id: string, findingId: string, label: string, note: string, by: string): RateResult {
   const entry = ctx.ledger.read(id);
   if (!entry.findings.some((finding) => finding.id === findingId)) throw new Error(`No finding ${findingId} in run ${id}.`);
   if (!isLabel(label)) throw new Error(`Rating must be one of: ${LABELS.join(", ")}.`);
@@ -354,7 +384,7 @@ export function rate(ctx: Context, id: string, findingId: string, label: string,
   return { runId: id, findingId, label };
 }
 
-export function cancel(ctx: Context, key: string): { runId: string; phase: string } {
+export function cancel(ctx: Context, key: string): PhaseResult<"cancelled"> {
   const run = ctx.store.active(key);
   if (!run) throw new Error("No run in progress.");
   if (run.phase === "completed") throw new Error("Completed runs are kept.");
@@ -362,7 +392,18 @@ export function cancel(ctx: Context, key: string): { runId: string; phase: strin
   return { runId: run.id, phase: "cancelled" };
 }
 
-export function status(ctx: Context, key: string): object | null {
+/** The run bound to a session. Fields a phase does not have yet are empty rather than missing. */
+export interface RunStatus {
+  runId: string;
+  phase: Phase;
+  files: string[];
+  checks: CheckResult[];
+  reviewer: Reviewer | null;
+  findings: Finding[];
+  evaluationRequest: NonNullable<CompletedRun["evaluationRequest"]> | null;
+}
+
+export function status(ctx: Context, key: string): RunStatus | null {
   const run = ctx.store.active(key);
   if (!run) return null;
   return {

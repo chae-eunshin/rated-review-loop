@@ -1,9 +1,21 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
-import { begin, cancel, handleStop, rate, ready, submit } from "../src/cycle.ts";
+import {
+  begin,
+  cancel,
+  handleStop,
+  packet,
+  rate,
+  ready,
+  status,
+  submit,
+  type Packet,
+  type RateResult,
+  type RunStatus,
+} from "../src/cycle.ts";
 import { sessionKey } from "../src/store.ts";
 import { createRepo, failingChecks, passingChecks, runIn, type Repo } from "./helpers.ts";
 
@@ -167,6 +179,48 @@ describe("review cycle", () => {
     ready(ctx, key, ["src/value.ts"]);
     handleStop(ctx, { session_id: SESSION, transcript_path: transcript }, "claude", passingChecks);
     expect(runIn(ctx.store.readRun(runId), ["awaiting-review"]).reviewer).toEqual({ client: "claude", model: "claude-test-1" });
+  });
+});
+
+describe("command output", () => {
+  it("prints the packet a reviewer reads", () => {
+    const { ctx, runId } = reachReview();
+    const output = packet(ctx, runId);
+    expectTypeOf(output).toEqualTypeOf<Packet>();
+    expect(output).toMatchObject({
+      runId,
+      phase: "awaiting-review",
+      changes: [{ path: "src/value.ts", before: "export const value = 1;\n", after: "export const value = 2;\n" }],
+      checks: [{ command: "true", exitCode: 0 }],
+    });
+  });
+
+  it("reports every field of status, empty where the phase has none yet", () => {
+    const ctx = repo.context();
+    const { runId } = begin(ctx, key, "change value");
+    expect(status(ctx, key)).toEqual({
+      runId,
+      phase: "implementing",
+      files: [],
+      checks: [],
+      reviewer: null,
+      findings: [],
+      evaluationRequest: null,
+    } satisfies RunStatus);
+  });
+
+  it("shows findings and the pending question once a review is submitted", () => {
+    const { ctx } = reachReview();
+    const { runId, evaluationQuestion } = submit(ctx, ctx.store.active(key)?.id ?? "", { summary: "ok", findings: [finding] });
+    const output = status(ctx, key);
+    expectTypeOf(output).toEqualTypeOf<RunStatus | null>();
+    expect(output).toMatchObject({
+      runId,
+      phase: "completed",
+      findings: [{ id: "F1", title: "Magic number" }],
+      evaluationRequest: { status: "pending", text: evaluationQuestion },
+    });
+    expectTypeOf(rate(ctx, runId, "F1", "useful", "", "owner")).toEqualTypeOf<RateResult>();
   });
 });
 
