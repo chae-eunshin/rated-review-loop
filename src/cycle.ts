@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmdirSync } from "node:fs";
 import { dirname, relative, sep } from "node:path";
 
-import { checksPassed, runChecks, type CheckRunner } from "./checks.ts";
-import { clientOfMode, skillDisplayPath, type Config } from "./config.ts";
+import { checksPassed, firstFailingGate, runChecks, type CheckRunner } from "./checks.ts";
+import { clientOfMode, describeGuidelines, skillDisplayPath, type Config, type Guideline } from "./config.ts";
 import {
   captureBaseline,
   fingerprint,
@@ -73,7 +73,12 @@ type ReadiedRun = PreparedRun | RunIn<"awaiting-review" | "completed">;
 /** The fields every phase has. Moving to another group of phases starts from these, so nothing stale carries over. */
 function base(run: Run): Omit<RunIn<"implementing">, "phase"> {
   const { schemaVersion, id, key, task, skill, startedAt, baseline, checks, attempts } = run;
-  return { schemaVersion, id, key, task, skill, startedAt, baseline, checks, attempts };
+  return { schemaVersion, id, key, task, skill, startedAt, baseline, checks, attempts, ...withInput(run.input) };
+}
+
+/** `input` is optional: absent rather than undefined, so stored runs stay clean. */
+function withInput(input: string | undefined): { input?: string } {
+  return input === undefined ? {} : { input };
 }
 
 const now = (): string => new Date().toISOString();
@@ -90,11 +95,22 @@ export interface PhaseResult<P extends Phase = Phase> {
   phase: P;
 }
 
-export function begin(ctx: Context, key: string, task: string): PhaseResult<"implementing"> {
+export function begin(ctx: Context, key: string, task: string, input?: string): PhaseResult<"implementing"> {
   if (!task.trim()) throw new Error("A task description is required.");
   const previous = ctx.store.active(key);
   if (previous && !FINISHED_PHASES.has(previous.phase)) {
     throw new Error(`Run ${previous.id} is still ${previous.phase}: resume it or cancel it first.`);
+  }
+  // Gates run before anything is recorded, so a refused begin leaves no run behind.
+  const failed = firstFailingGate(ctx.root, ctx.config, {
+    RATED_REVIEW_LOOP_INPUT: input ?? "",
+    RATED_REVIEW_LOOP_TASK: task,
+    RATED_REVIEW_LOOP_SESSION_KEY: key,
+  });
+  if (failed) {
+    throw new Error(
+      `begin refused: the project gate \`${failed.command}\` failed (exit ${String(failed.exitCode)}). Do what its output asks, then run begin again.\n${failed.output.slice(-4_000).trim()}`,
+    );
   }
   ctx.store.prune(PRUNE_AFTER_DAYS);
   const run: Run = {
@@ -109,6 +125,7 @@ export function begin(ctx: Context, key: string, task: string): PhaseResult<"imp
     baseline: captureBaseline(ctx.root, ctx.config, ctx.store),
     checks: [],
     attempts: [],
+    ...withInput(input),
   };
   ctx.store.saveRun(run);
   ctx.store.bind(key, run.id);
@@ -246,26 +263,38 @@ function verifyAndRequestReview(
   return { decision: "block", reason: reviewRequest(ctx, next, cliClient) };
 }
 
-function reviewRequest(ctx: Context, run: Pick<Run, "id">, cliClient: Client | null): string {
+function reviewRequest(ctx: Context, run: Pick<Run, "id" | "input">, cliClient: Client | null): string {
+  const { instructions } = ctx.config;
+  const afterReview = instructions.afterReview !== null ? `After the review is recorded: ${instructions.afterReview}` : null;
+  const input = run.input !== undefined ? `Input given when the task began: ${run.input}.` : null;
   if (cliClient !== null) {
     return [
       `Checks passed. Run \`${BIN} review ${run.id}\`; it asks ${cliClient} to review the change and records the findings.`,
       "Do not modify code. Report the findings with their ids and evidence to the user.",
+      input,
+      afterReview,
       "If the command prints an evaluationQuestion, end your final message with it verbatim.",
-    ].join(" ");
+    ]
+      .filter((part) => part !== null)
+      .join(" ");
   }
-  const guidelines = ctx.config.guidelines.length ? ` Project guidelines: ${ctx.config.guidelines.join(", ")}.` : "";
   // The report must live outside the review scope: a new file inside it would make submit see a changed tree.
   const report = ctx.store.workPath(run.id, "report.json");
   mkdirSync(dirname(report), { recursive: true });
   const reportPath = relative(ctx.root, report).split(sep).join("/");
   return [
-    `Checks passed. Read ${skillDisplayPath(ctx.root, ctx.config)} and review the change in \`${BIN} packet ${run.id}\`.${guidelines}`,
+    `Checks passed. Read ${skillDisplayPath(ctx.root, ctx.config)} and review the change in \`${BIN} packet ${run.id}\`.`,
+    describeGuidelines(ctx.config.guidelines),
+    input,
+    instructions.review !== null ? `Project review instructions: ${instructions.review}` : null,
     `Write findings in language "${ctx.config.language}". Do not modify code.`,
     `Write the result JSON to ${reportPath} (not elsewhere in the repository) and record it with \`${BIN} submit ${run.id} ${reportPath}\` (an empty findings array if nothing is well-founded).`,
+    afterReview,
     "Then report the findings to the user and end your final message with the evaluationQuestion from the submit output, verbatim.",
     "This request is sent once for this run.",
-  ].join(" ");
+  ]
+    .filter((part) => part !== null)
+    .join(" ");
 }
 
 /** The change under review and what it was checked with. A CLI reviewer reads this as a file. */
@@ -275,7 +304,11 @@ export interface Packet {
   phase: Phase;
   skill: string;
   language: string;
-  guidelines: string[];
+  guidelines: Guideline[];
+  /** Value passed to `begin --input`, or null. */
+  input: string | null;
+  /** The project's extra instructions for the reviewer, or null. */
+  reviewInstructions: string | null;
   changes: Change[];
   checks: Pick<CheckResult, "command" | "exitCode">[];
 }
@@ -289,6 +322,8 @@ export function packet(ctx: Context, id: string): Packet {
     skill: run.skill,
     language: ctx.config.language,
     guidelines: ctx.config.guidelines,
+    input: run.input ?? null,
+    reviewInstructions: ctx.config.instructions.review,
     changes: "changes" in run ? run.changes : [],
     checks: run.checks.map(({ command, exitCode }) => ({ command, exitCode })),
   };
@@ -451,18 +486,26 @@ function ensureQuestion(ctx: Context, run: CompletedRun, event: StopInput): Hook
   };
 }
 
-export function sessionContext(sessionId: string): HookOutput {
+/** What every session is told at start. `config` is null outside a git repository. */
+export function sessionContext(sessionId: string, config: Config | null = null): HookOutput {
   const key = sessionKey(sessionId);
+  const gated = config !== null && config.gates.begin.length > 0;
   return {
     hookSpecificOutput: {
       hookEventName: "SessionStart",
       additionalContext: [
         `rated-review-loop session key: ${key}.`,
         "Do not start a review for questions or documentation.",
-        `Before implementing approved code, run \`${BIN} begin ${key} "<task>"\` to record the baseline.`,
+        `Before implementing approved code, run \`${BIN} begin ${key} "<task>"${gated ? " --input <value>" : ""}\` to record the baseline.`,
+        gated
+          ? "begin first runs this project's gates; pass what they need with --input. If a gate fails, do what its output asks and run begin again."
+          : null,
         `After implementing, run \`${BIN} ready ${key} <files you implemented>\`; the Stop hook then runs checks and requests a review.`,
         `Check progress with \`${BIN} status ${key}\`. Do not begin twice when resuming. Never rate findings on the user's behalf.`,
-      ].join(" "),
+        config?.instructions.session != null ? `Project rules: ${config.instructions.session}` : null,
+      ]
+        .filter((part) => part !== null)
+        .join(" "),
     },
   };
 }

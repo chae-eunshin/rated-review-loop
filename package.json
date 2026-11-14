@@ -1,6 +1,6 @@
 {
   "name": "rated-review-loop",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0-rc.3",
   "description": "Review AI-written code in a loop, let the owner rate every finding, and alert when review usefulness drops.",
   "license": "MIT",
   "author": "chae-eunshin",
@@ -23,6 +23,7 @@
     "dist",
     "skills",
     "examples",
+    "config.schema.json",
     "README-ko_kr.md"
   ],
   "engines": {
@@ -41,7 +42,8 @@
     "check:readme-sync": "node scripts/check-readme-sync.ts",
     "check:package": "publint --strict",
     "prepare": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
-    "prepublishOnly": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm check:package"
+    "prepublishOnly": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm check:package",
+    "generate:schema": "node scripts/generate-config-schema.ts"
   },
   "keywords": [
     "code-review",

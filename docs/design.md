@@ -1,7 +1,7 @@
 # Design
 
 This document explains how rated-review-loop works and why it is built this way: the run lifecycle, the decisions
-behind it, what changed when it was extracted from the app it grew in, the extension points planned next, and what
+behind it, what changed when it was extracted from the app it grew in, the extension points, and what
 it does not measure. For setup and commands, see the [README](../README.md).
 
 ## Problem
@@ -106,8 +106,8 @@ Statistics are grouped by skill version. The version is the content hash of the 
 upgrading rated-review-loop does not split the statistics, and reverting the skill resumes the old group.
 The original implementation hashed the tool's scripts too, which mixed tool changes into skill comparisons.
 
-Guidelines and future project instructions also affect the review but are not part of the hash yet; see
-[Extension points](#extension-points).
+Guidelines and review instructions also change what the reviewer is told, so they are hashed with the skill; see
+[Versioning the review inputs](#versioning-the-review-inputs).
 
 ### Ratings are committed; reviewed source stays local
 
@@ -159,23 +159,30 @@ the review rules and changed the following.
 
 | Area | In the app | In the package | Why |
 | --- | --- | --- | --- |
-| Checks, scope, guidelines | Hard-coded (tsc, lint, architecture, naming; `src/`, `scripts/`) | Config (`checks`, `include`, `exclude`, `guidelines`) | Other projects have other checks and layouts |
-| Version hash | Skill + tool scripts | Skill only | Tool upgrades should not split statistics |
+| Checks, scope, guidelines | Hard-coded (tsc, lint, architecture, naming; `src/`, `scripts/`; documents read "when relevant") | Config (`checks`, `include`, `exclude`, conditional `guidelines`) | Other projects have other checks and layouts |
+| Version hash | Skill + tool scripts | Skill + guidelines + review instructions | Tool upgrades should not split statistics; review inputs should |
 | Rating storage | Local, ignored by git | Committed ledger | Teams pool ratings; CI can alert |
 | Snapshots | Full file contents | Git blob ids | Size and speed on large repositories |
 | Reviewer | The session agent | Session or a separate CLI | Reduce self-review bias; compare reviewers |
 | Metrics | Useful, incorrect and low-value rates; check retries; review duration | Useful rate over a rolling window, label counts | Kept the one number that drives an alert; the others may return |
 | `checks-only` comparison mode | Available | Removed | Comparing with and without review needs matched tasks, which the loop cannot ensure |
-| Learning-record gate at `begin`, scenario map after review | Built in | Removed | App-specific workflow; to return as generic extension points |
+| Learning-record gate at `begin`, scenario map after review | Built in | `gates.begin`, `begin --input`, `instructions` | App-specific workflow, now expressed as configuration |
 | Skeleton files | Excluded in code | Excluded by config (`**/*.skeleton.*`) and mentioned in the skill | Naming convention of one project |
 | Language | Korean instructions and question | English instructions, findings in `language` | Shared package; the question is not localized yet |
 
 ## Extension points
 
 The app's learning-record gate and scenario map were removed because they were hard-coded to one workflow. What they
-did is generic: make the agent read the right documents, and require a step before work starts. These are planned
-as configuration, to be built while the package is trialled in the app and fixed before the config format is
-published.
+did is generic: make the reviewer read the right documents, require a step before work starts, and have the agent do
+something once the review is recorded. These are now configuration.
+
+### Typed config
+
+`rated-review-loop.config.json` is user input, so it is parsed with a zod schema (`ConfigInputSchema` in
+`src/config.ts`) that rejects unknown keys and reports the most specific problem, e.g.
+`"guidelines.0.when" is required.` The same schema generates `config.schema.json`, shipped with the package; a
+`"$schema"` reference gives editors and agents completion, descriptions and validation. A test fails if the
+committed schema file is out of date.
 
 ### Conditional guidelines
 
@@ -191,12 +198,11 @@ published.
 ```
 
 - A string is always read; an object is read when `when` applies.
-- `when` describes the change, not the author's situation, because the reviewer sees a diff. One sentence, length-limited.
+- `when` describes the change, not the author's situation, because the reviewer sees a diff. At most 200 characters.
 - `path` must exist when the config is loaded; duplicate paths and unknown fields are rejected.
 - `covers` names the rules the document holds, so findings can cite it as `rule`.
-
-The config moves from hand-written validation to a zod schema, which also generates a JSON Schema so editors and
-agents can complete and check `rated-review-loop.config.json`.
+- The session request and the CLI prompt describe guidelines with the same function, so both reviewers are told
+  the same thing.
 
 ### Gates before `begin`
 
@@ -204,26 +210,31 @@ agents can complete and check `rated-review-loop.config.json`.
 "gates": { "begin": ["pnpm check:learning --design-only \"$RATED_REVIEW_LOOP_INPUT\""] }
 ```
 
-Commands that must pass before `begin` records a baseline. A failure refuses `begin` and shows the command output to
-the agent. `begin <key> <task> --input <value>` passes extra input as an environment variable. Checks gate the
-review after implementation; gates do the same before it starts.
+Commands that must pass before `begin` records anything. They run in order and stop at the first failure, which
+refuses `begin`, leaves no run behind and shows the command output to the agent. `begin <key> <task> --input <value>`
+passes the value as `RATED_REVIEW_LOOP_INPUT` (with `RATED_REVIEW_LOOP_TASK` and `RATED_REVIEW_LOOP_SESSION_KEY`).
+The input is stored in the run and shown to the reviewer and in the packet, so later steps can refer to it. When
+gates exist, the SessionStart context shows `--input` and explains what to do when a gate fails.
+
+Checks gate the review after implementation; gates do the same before it starts.
 
 ### Project instructions
 
-```json
-"instructions": {
-  "session": "Before implementing, write the design discussion in docs/learning/... and pass it with --input.",
-  "review": "After submitting, write three scenarios that could break in the learning record's scenario map."
-}
-```
+| Key | Added to | Who reads it | In the version hash |
+| --- | --- | --- | --- |
+| `instructions.session` | SessionStart context | Coding agent | No |
+| `instructions.review` | Review request and CLI prompt | Reviewer | Yes |
+| `instructions.afterReview` | Review request, after the report is recorded | Coding agent | No |
 
-`session` is appended to the SessionStart context, `review` to the review request.
+Instructions are split by reader because a CLI reviewer is a read-only process: work that writes files, such as the
+app's scenario map, belongs to the coding agent after the review, not to the reviewer.
 
 ### Versioning the review inputs
 
-Anything that changes what the reviewer is told should change the version used for statistics. The version will
-hash the skill, `instructions.review` and the guideline list together. Gates and session instructions do not affect
-the review itself and stay out of the hash.
+The version used for statistics hashes the skill, the guideline list and `instructions.review`: everything that
+changes what the reviewer is told. When there are no guidelines or review instructions, it is the hash of the skill
+alone, as before. Gates and the session and after-review instructions do not affect the review and stay out of the
+hash. Guideline file contents are not hashed; editing a guideline document does not start a new group.
 
 ## What the loop does not measure
 

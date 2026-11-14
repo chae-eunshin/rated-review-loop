@@ -58,7 +58,7 @@ begin ──► implement ──► ready ──► [Stop hook] checks ──►
 5. 에이전트는 답변 끝에 평가 질문을 붙입니다. 책임자가 답하면 평가가 **원장(ledger)**에 저장됩니다. 원장은 실행마다 작은 JSON 파일 하나이고, 커밋해서 팀이 함께 씁니다. 리뷰한 소스는 로컬에만 남습니다.
 6. **stats**가 스킬 버전과 리뷰어별로 평가를 묶고, 최근 구간을 확인합니다.
 
-실행 단계, 설계 결정과 그 이유, 예정된 확장 지점은 [docs/design.md](./docs/design.md)(영문)에 있습니다. 변경 내역은 [CHANGELOG](./CHANGELOG.md)에 있습니다.
+실행 단계, 설계 결정과 그 이유, 확장 지점은 [docs/design.md](./docs/design.md)(영문)에 있습니다. 변경 내역은 [CHANGELOG](./CHANGELOG.md)에 있습니다.
 
 ## 설치
 
@@ -87,15 +87,36 @@ cp node_modules/rated-review-loop/examples/codex-hooks.json .codex/hooks.json
 
 ```json
 {
-  "skill": "node_modules/rated-review-loop/skills/review-completed-code/SKILL.md",
-  "guidelines": ["AGENTS.md", "docs/architecture.md"],
+  "$schema": "./node_modules/rated-review-loop/config.schema.json",
+  "guidelines": [
+    "AGENTS.md",
+    { "path": "docs/architecture/dependencies.md", "when": "an import crosses a feature boundary" }
+  ],
   "checks": ["pnpm typecheck", "pnpm lint"],
   "include": ["src/**/*.{ts,tsx}", "scripts/**/*.{js,mjs,ts}"],
   "reviewer": { "mode": "session" },
-  "language": "en",
-  "stats": { "groupBy": ["skill", "reviewer"], "window": 100, "threshold": 0.8 }
+  "language": "en"
 }
 ```
+
+`$schema`를 적으면 에디터와 에이전트가 자동완성과 검증을 받을 수 있습니다. 문자열로 적은 기준 문서는 항상 읽고, `when`이 있는 문서는 변경이 그 조건에 해당할 때만 읽습니다. 기준 문서 경로는 실제로 있어야 합니다.
+
+프로젝트마다 필수 단계와 지시를 덧붙일 수 있습니다.
+
+```json
+{
+  "gates": { "begin": ["node scripts/check-design-notes.mjs \"$RATED_REVIEW_LOOP_INPUT\""] },
+  "instructions": {
+    "session": "Before implementing, write the design notes and pass their path to begin with --input.",
+    "review": "Check dependency directions before anything else.",
+    "afterReview": "Add three scenarios that could break to the design notes."
+  }
+}
+```
+
+- `gates.begin` 명령은 `begin`이 아무것도 기록하기 전에 실행됩니다. 하나라도 실패하면 `begin`이 거절되고 에이전트가 그 출력을 봅니다. `begin <key> <task> --input <value>`의 값은 `RATED_REVIEW_LOOP_INPUT`으로 전달됩니다.
+- `instructions.session`은 SessionStart 안내에, `instructions.review`는 리뷰어에게 주는 지시에, `instructions.afterReview`는 리뷰가 기록된 뒤 코딩 에이전트가 할 일에 붙습니다.
+- 통계에 쓰는 스킬 버전은 스킬, 기준 문서 목록, `instructions.review`를 함께 해시합니다. 리뷰어에게 주는 내용이 바뀌면 새 버전으로 집계됩니다.
 
 ### 3. 로컬 상태 제외
 
@@ -154,8 +175,12 @@ skill 9b1e04c2aa10 · reviewer codex: 12 runs, 18 findings, 2 unrated — useful
 
 | 키 | 기본값 | 설명 |
 | --- | --- | --- |
-| `skill` | 내장 스킬 | 리뷰 지시문, 이 파일의 해시가 스킬 버전 |
-| `guidelines` | `[]` | 리뷰어가 비교할 프로젝트 문서 |
+| `skill` | 내장 스킬 | 리뷰 지시문, 버전 해시에 포함 |
+| `guidelines` | `[]` | 리뷰어가 비교할 문서: 경로(항상 읽음) 또는 `{ path, when, covers? }`(`when`에 해당할 때 읽음), 버전 해시에 포함 |
+| `instructions.session` | 없음 | SessionStart 안내에 붙는 프로젝트 규칙 |
+| `instructions.review` | 없음 | 리뷰어에게 주는 추가 지시, 버전 해시에 포함 |
+| `instructions.afterReview` | 없음 | 리뷰가 기록된 뒤 코딩 에이전트가 할 일 |
+| `gates.begin` | `[]` | `begin` 전에 통과해야 하는 셸 명령, `RATED_REVIEW_LOOP_INPUT`, `_TASK`, `_SESSION_KEY`를 받음 |
 | `checks` | `[]` | 리뷰 전에 모두 통과해야 하는 셸 명령 |
 | `checkTimeoutMs` | `120000` | 검사 하나의 제한 시간 |
 | `include` / `exclude` | 모든 파일 / 의존성·빌드·잠금 파일 | 리뷰 대상 파일 glob, 바이너리와 2MB 넘는 파일은 건너뜀 |
@@ -171,7 +196,8 @@ skill 9b1e04c2aa10 · reviewer codex: 12 runs, 18 findings, 2 unrated — useful
 
 ```text
 rated-review-loop hook --client <claude|codex>          Handle a SessionStart/Stop hook event from stdin
-rated-review-loop begin <session-key> <task>            Record the baseline before implementing
+rated-review-loop begin <session-key> <task> [--input <value>]
+                                                        Run the project's gates, then record the baseline
 rated-review-loop ready <session-key> <file...>         Mark the files you implemented as ready for checks
 rated-review-loop packet <run-id>                       Print the change under review
 rated-review-loop submit <run-id> <report.json>         Record a review report written by the session agent

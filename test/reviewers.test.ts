@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { begin, handleStop, ready } from "../src/cycle.ts";
 import { reviewWithCli } from "../src/review.ts";
 import { codexSessionModel } from "../src/reviewers/codex.ts";
-import type { Spawn } from "../src/reviewers/index.ts";
+import { reviewPrompt, type Spawn } from "../src/reviewers/index.ts";
 import { sessionKey } from "../src/store.ts";
 import { modelFromTranscript } from "../src/transcript.ts";
 import { createRepo, passingChecks, type Repo } from "./helpers.ts";
@@ -120,5 +120,22 @@ describe("modelFromTranscript", () => {
     );
     expect(modelFromTranscript(path)).toBe("claude-model");
     expect(modelFromTranscript(undefined)).toBe("unknown");
+  });
+});
+
+describe("CLI reviewer prompt", () => {
+  it("carries the guidelines, the begin input and the review instructions, but not the after-review step", () => {
+    repo.write("docs/deps.md", "# Dependencies\n");
+    const ctx = repo.context({
+      reviewer: { mode: "codex-cli" },
+      guidelines: ["AGENTS.md", { path: "docs/deps.md", when: "an import crosses a boundary" }],
+      instructions: { review: "Check dependency directions first.", afterReview: "Update the notes." },
+    });
+    const prompt = reviewPrompt(repo.root, ctx.config, "packet.json", "notes.md");
+    expect(prompt).toContain("Always read: AGENTS.md. Read only when it applies to the change: docs/deps.md (when an import crosses a boundary).");
+    expect(prompt).toContain("Input given when the task began: notes.md");
+    expect(prompt).toContain("Project review instructions: Check dependency directions first.");
+    // The CLI reviewer is read-only; work after the review belongs to the coding agent.
+    expect(prompt).not.toContain("Update the notes.");
   });
 });

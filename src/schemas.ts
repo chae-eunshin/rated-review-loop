@@ -76,6 +76,8 @@ const RunBaseSchema = z.object({
   task: text,
   skill: text,
   startedAt: text,
+  /** Value passed to `begin --input`, e.g. the document a gate checked. Shown to the reviewer and the agent. */
+  input: text.optional(),
   /** Path → content id at `begin` (see `Snapshot`), not the content itself. */
   baseline: z.record(text, text),
   checks: z.array(CheckResultSchema),
@@ -148,7 +150,7 @@ export const LedgerEntrySchema = z.object({
  * Codex sends `null` for an absent transcript or message, so those accept null as well as a missing key.
  */
 export const HookEventSchema = z.discriminatedUnion("hook_event_name", [
-  z.object({ hook_event_name: z.literal("SessionStart"), session_id: nonEmpty }),
+  z.object({ hook_event_name: z.literal("SessionStart"), session_id: nonEmpty, cwd: text.nullish() }),
   z.object({
     hook_event_name: z.literal("Stop"),
     session_id: nonEmpty,

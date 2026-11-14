@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-import { loadConfig } from "./config.ts";
+import { loadConfig, type Config } from "./config.ts";
 import {
   begin,
   cancel,
@@ -26,7 +26,8 @@ import { isClient, type Client } from "./types.ts";
 const USAGE = `Usage: rated-review-loop <command>
 
   hook --client <claude|codex>          Handle a SessionStart/Stop hook event from stdin
-  begin <session-key> <task>            Record the baseline before implementing
+  begin <session-key> <task> [--input <value>]
+                                        Run the project's gates, then record the baseline
   ready <session-key> <file...>         Mark the files you implemented as ready for checks
   packet <run-id>                       Print the change under review
   submit <run-id> <report.json>         Record a review report written by the session agent
@@ -39,6 +40,21 @@ const USAGE = `Usage: rated-review-loop <command>
 
 function gitRoot(cwd: string): string {
   return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" }).trim();
+}
+
+/** Config for the session's repository, or null outside one. A broken config still fails loudly. */
+function sessionConfig(cwd: string | null | undefined): Config | null {
+  let root: string;
+  try {
+    root = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: cwd ?? process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+  return loadConfig(root);
 }
 
 function option(args: string[], name: string): string | undefined {
@@ -69,7 +85,7 @@ function runHook(args: string[]): HookOutput {
   const parsed = HookEventSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`unexpected ${name} hook input (${describeIssue(parsed.error)})`);
   const event = parsed.data;
-  if (event.hook_event_name === "SessionStart") return sessionContext(event.session_id);
+  if (event.hook_event_name === "SessionStart") return sessionContext(event.session_id, sessionConfig(event.cwd));
   const root = gitRoot(event.cwd ?? process.cwd());
   return handleStop(createContext(root, loadConfig(root)), event, client satisfies Client);
 }
@@ -78,8 +94,13 @@ function runCommand(command: string | undefined, args: string[]): unknown {
   const root = gitRoot(process.cwd());
   const ctx: Context = createContext(root, loadConfig(root));
   switch (command) {
-    case "begin":
-      return begin(ctx, required(args[0], "session-key"), required(args[1], "task"));
+    case "begin": {
+      const at = args.indexOf("--input");
+      const input = at === -1 ? undefined : args[at + 1];
+      if (at !== -1 && input === undefined) throw new Error("--input needs a value.");
+      const positional = at === -1 ? args : [...args.slice(0, at), ...args.slice(at + 2)];
+      return begin(ctx, required(positional[0], "session-key"), required(positional[1], "task"), input);
+    }
     case "ready":
       return ready(ctx, required(args[0], "session-key"), args.slice(1));
     case "packet":
