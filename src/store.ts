@@ -50,9 +50,17 @@ export function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-/** Skill version: content hash only, so tool upgrades do not reset statistics and reverting the skill resumes them. */
+/**
+ * Version of what the reviewer is told: the skill, plus the guidelines and review instructions when there are any.
+ * Tool code is not part of it, so upgrading the tool does not reset statistics, and reverting resumes them.
+ */
 export function skillVersion(root: string, config: Config): string {
-  return hash(readFileSync(skillPath(root, config), "utf8")).slice(0, 12);
+  const skill = readFileSync(skillPath(root, config), "utf8");
+  const extra =
+    config.guidelines.length || config.instructions.review !== null
+      ? `\0${JSON.stringify({ guidelines: config.guidelines, review: config.instructions.review })}`
+      : "";
+  return hash(skill + extra).slice(0, 12);
 }
 
 /**

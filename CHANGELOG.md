@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/).
 While the version is 0.x, the config, ledger and command output formats may still change.
 
+## [0.1.0-rc.3] - 2026-11-15
+
+### Added
+
+- Conditional guidelines: `{ "path", "when", "covers" }` entries are read only when `when` applies to the change.
+  Guideline paths must exist. ([#15])
+- `gates.begin`: commands that must pass before `begin` records a baseline, with `begin --input <value>` passed as
+  `RATED_REVIEW_LOOP_INPUT`. The input is shown to the reviewer and in the packet. ([#15])
+- `instructions.session`, `instructions.review` and `instructions.afterReview`, added to what the coding agent and
+  the reviewer are told. ([#15])
+- `config.schema.json`, generated from the schema the CLI validates with, for `"$schema"` completion. ([#15])
+
+### Changed
+
+- The config is parsed with zod and errors name the exact field, e.g. `"guidelines.0.when" is required.` ([#15])
+- The version used for statistics also hashes the guideline list and `instructions.review`, so changing what the
+  reviewer is told starts a new group. Without them it is the skill hash, as before. ([#15])
+- `packet` reports guidelines as objects and adds `input` and `reviewInstructions`. ([#15])
+
 ## [0.1.0-rc.2] - 2026-11-15
 
 ### Fixed
@@ -47,6 +66,7 @@ First pre-release, distributed as a GitHub release tarball.
 
 - The review skill spells out the full `npx rated-review-loop rate ...` command. ([#4])
 
+[0.1.0-rc.3]: https://github.com/chae-eunshin/rated-review-loop/compare/v0.1.0-rc.2...v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/chae-eunshin/rated-review-loop/compare/v0.1.0-rc.1...v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/chae-eunshin/rated-review-loop/releases/tag/v0.1.0-rc.1
 [#2]: https://github.com/chae-eunshin/rated-review-loop/pull/2
@@ -57,3 +77,4 @@ First pre-release, distributed as a GitHub release tarball.
 [#7]: https://github.com/chae-eunshin/rated-review-loop/pull/7
 [#9]: https://github.com/chae-eunshin/rated-review-loop/pull/9
 [#12]: https://github.com/chae-eunshin/rated-review-loop/pull/12
+[#15]: https://github.com/chae-eunshin/rated-review-loop/pull/15

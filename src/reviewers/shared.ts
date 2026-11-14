@@ -1,7 +1,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { skillPath, type Config } from "../config.ts";
+import { describeGuidelines, skillPath, type Config } from "../config.ts";
 import type { Client, Reviewer } from "../types.ts";
 
 export interface SpawnResult {
@@ -40,19 +40,20 @@ export interface CliReviewer {
 /** The report shape the CLIs must produce, generated from the same schema `submit` validates with. */
 export { REPORT_JSON_SCHEMA as REPORT_SCHEMA } from "../schemas.ts";
 
-export function reviewPrompt(root: string, config: Config, packetPath: string): string {
-  const guidelines = config.guidelines.length
-    ? `Project guidelines to compare against (read the relevant ones): ${config.guidelines.join(", ")}.`
-    : "The project has no extra guidelines configured.";
+export function reviewPrompt(root: string, config: Config, packetPath: string, input?: string): string {
   return [
     readFileSync(skillPath(root, config), "utf8"),
     "---",
     "You are running as an independent reviewer outside the coding session.",
     `The change to review is in ${packetPath} (JSON: changes[].path/before/after). You may read other repository files for context.`,
-    guidelines,
+    describeGuidelines(config.guidelines) ?? "The project has no extra guidelines configured.",
+    input !== undefined ? `Input given when the task began: ${input}` : null,
+    config.instructions.review !== null ? `Project review instructions: ${config.instructions.review}` : null,
     `Write summary and findings in language "${config.language}".`,
     "Do not modify any file. Respond only with the JSON object described by the output schema.",
-  ].join("\n\n");
+  ]
+    .filter((part) => part !== null)
+    .join("\n\n");
 }
 
 export function failure(client: Client, result: SpawnResult): Error {

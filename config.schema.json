@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "JSON Schema for editor completion.",
+      "type": "string"
+    },
+    "skill": {
+      "description": "Review instructions. Defaults to the skill bundled with the package. Part of the version hash.",
+      "type": "string",
+      "minLength": 1
+    },
+    "guidelines": {
+      "description": "Project documents the reviewer compares the change against: always, or only when a condition applies.",
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string",
+            "description": "A document the reviewer always reads, relative to the repository root."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Document path, relative to the repository root. Must exist."
+              },
+              "when": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "When the reviewer should read it, stated in terms of the change, e.g. \"an import crosses a src/features/* boundary\". One sentence."
+              },
+              "covers": {
+                "description": "The rules this document holds, so a finding can cite it as its rule.",
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "path",
+              "when"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "instructions": {
+      "description": "Project text added to what the coding agent and the reviewer are told.",
+      "type": "object",
+      "properties": {
+        "session": {
+          "description": "Project rules for the coding agent, added to the SessionStart context.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "review": {
+          "description": "Extra instructions for the reviewer, session or CLI. Part of the version hash.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "afterReview": {
+          "description": "What the coding agent does after the review is recorded, e.g. update a document.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "gates": {
+      "description": "Steps that must pass before work starts, like checks before a review.",
+      "type": "object",
+      "properties": {
+        "begin": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Shell commands that must pass before begin records a baseline. They get RATED_REVIEW_LOOP_INPUT (from begin --input), RATED_REVIEW_LOOP_TASK and RATED_REVIEW_LOOP_SESSION_KEY."
+        }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Shell commands that must all pass before a review is requested."
+    },
+    "checkTimeoutMs": {
+      "description": "Timeout of each check and gate, in milliseconds.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Globs, relative to the repository root, of files that can be reviewed."
+    },
+    "exclude": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Globs excluded from review. Replaces the default list."
+    },
+    "reviewer": {
+      "description": "session: the agent that wrote the code reviews it. <client>-cli: a separate CLI process does.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "session",
+            "claude-cli",
+            "codex-cli"
+          ]
+        },
+        "model": {
+          "description": "Model for a CLI reviewer.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "language": {
+      "description": "Language the reviewer writes findings in, e.g. \"en\" or \"ko\".",
+      "type": "string",
+      "minLength": 1
+    },
+    "stats": {
+      "type": "object",
+      "properties": {
+        "groupBy": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "skill",
+              "reviewer",
+              "model"
+            ]
+          }
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ledgerDir": {
+      "description": "Committed ratings.",
+      "type": "string"
+    },
+    "localDir": {
+      "description": "Local run state. Must be ignored by git.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

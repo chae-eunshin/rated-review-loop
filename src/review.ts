@@ -18,7 +18,7 @@ export function reviewWithCli(ctx: Context, id: string, spawn: Spawn = spawnProc
       root: ctx.root,
       packetPath,
       workDir: dirname(packetPath),
-      prompt: reviewPrompt(ctx.root, ctx.config, relative(ctx.root, packetPath)),
+      prompt: reviewPrompt(ctx.root, ctx.config, relative(ctx.root, packetPath), run.input),
       ...(ctx.config.reviewer.model !== undefined ? { model: ctx.config.reviewer.model } : {}),
     },
     spawn,

@@ -58,7 +58,7 @@ begin ──► implement ──► ready ──► [Stop hook] checks ──►
 5. The agent ends its reply with a rating question. The owner answers, and the rating is stored in the **ledger**, one small JSON file per run, committed and shared by the team. Reviewed source stays local.
 6. **stats** groups ratings by skill version and reviewer and checks the latest window.
 
-The run lifecycle, the design decisions and the planned extension points are in [docs/design.md](./docs/design.md). Changes are listed in the [changelog](./CHANGELOG.md).
+The run lifecycle, the design decisions and the extension points are in [docs/design.md](./docs/design.md). Changes are listed in the [changelog](./CHANGELOG.md).
 
 ## Install
 
@@ -87,15 +87,36 @@ Create `rated-review-loop.config.json` in the repository root. Every key is opti
 
 ```json
 {
-  "skill": "node_modules/rated-review-loop/skills/review-completed-code/SKILL.md",
-  "guidelines": ["AGENTS.md", "docs/architecture.md"],
+  "$schema": "./node_modules/rated-review-loop/config.schema.json",
+  "guidelines": [
+    "AGENTS.md",
+    { "path": "docs/architecture/dependencies.md", "when": "an import crosses a feature boundary" }
+  ],
   "checks": ["pnpm typecheck", "pnpm lint"],
   "include": ["src/**/*.{ts,tsx}", "scripts/**/*.{js,mjs,ts}"],
   "reviewer": { "mode": "session" },
-  "language": "en",
-  "stats": { "groupBy": ["skill", "reviewer"], "window": 100, "threshold": 0.8 }
+  "language": "en"
 }
 ```
+
+`$schema` gives editors and agents completion and validation. A guideline given as a string is always read; one with `when` is read only when the condition applies to the change. Guideline paths must exist.
+
+Projects can add their own required steps and instructions:
+
+```json
+{
+  "gates": { "begin": ["node scripts/check-design-notes.mjs \"$RATED_REVIEW_LOOP_INPUT\""] },
+  "instructions": {
+    "session": "Before implementing, write the design notes and pass their path to begin with --input.",
+    "review": "Check dependency directions before anything else.",
+    "afterReview": "Add three scenarios that could break to the design notes."
+  }
+}
+```
+
+- `gates.begin` commands run before `begin` records anything; if one fails, `begin` is refused and the agent sees its output. `begin <key> <task> --input <value>` passes the value as `RATED_REVIEW_LOOP_INPUT`.
+- `instructions.session` is added to the SessionStart context, `instructions.review` to what the reviewer is told, and `instructions.afterReview` to what the coding agent does once the review is recorded.
+- The skill version used for statistics hashes the skill, the guidelines and `instructions.review`, so changing what the reviewer is told starts a new group.
 
 ### 3. Ignore local state
 
@@ -154,8 +175,12 @@ skill 9b1e04c2aa10 · reviewer codex: 12 runs, 18 findings, 2 unrated — useful
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `skill` | bundled skill | Review instructions; their hash is the skill version |
-| `guidelines` | `[]` | Project documents the reviewer compares against |
+| `skill` | bundled skill | Review instructions; part of the version hash |
+| `guidelines` | `[]` | Documents the reviewer compares against: a path (always read) or `{ path, when, covers? }` (read when `when` applies); part of the version hash |
+| `instructions.session` | none | Project rules added to the SessionStart context |
+| `instructions.review` | none | Extra instructions for the reviewer; part of the version hash |
+| `instructions.afterReview` | none | What the coding agent does after the review is recorded |
+| `gates.begin` | `[]` | Shell commands that must pass before `begin`; they get `RATED_REVIEW_LOOP_INPUT`, `_TASK`, `_SESSION_KEY` |
 | `checks` | `[]` | Shell commands that must all pass before review |
 | `checkTimeoutMs` | `120000` | Timeout per check |
 | `include` / `exclude` | all files / dependencies, builds, lockfiles | Globs of reviewable files; binary and files over 2 MB are skipped |
@@ -171,7 +196,8 @@ skill 9b1e04c2aa10 · reviewer codex: 12 runs, 18 findings, 2 unrated — useful
 
 ```text
 rated-review-loop hook --client <claude|codex>          Handle a SessionStart/Stop hook event from stdin
-rated-review-loop begin <session-key> <task>            Record the baseline before implementing
+rated-review-loop begin <session-key> <task> [--input <value>]
+                                                        Run the project's gates, then record the baseline
 rated-review-loop ready <session-key> <file...>         Mark the files you implemented as ready for checks
 rated-review-loop packet <run-id>                       Print the change under review
 rated-review-loop submit <run-id> <report.json>         Record a review report written by the session agent

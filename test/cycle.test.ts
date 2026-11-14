@@ -12,13 +12,14 @@ import {
   packet,
   rate,
   ready,
+  sessionContext,
   status,
   submit,
   type Packet,
   type RateResult,
   type RunStatus,
 } from "../src/cycle.ts";
-import { sessionKey } from "../src/store.ts";
+import { sessionKey, skillVersion } from "../src/store.ts";
 import { createRepo, failingChecks, passingChecks, runIn, type Repo } from "./helpers.ts";
 
 const SESSION = "session-A";
@@ -181,6 +182,71 @@ describe("review cycle", () => {
     ready(ctx, key, ["src/value.ts"]);
     handleStop(ctx, { session_id: SESSION, transcript_path: transcript }, "claude", passingChecks);
     expect(runIn(ctx.store.readRun(runId), ["awaiting-review"]).reviewer).toEqual({ client: "claude", model: "claude-test-1" });
+  });
+});
+
+describe("project gates and instructions", () => {
+  const gated = { gates: { begin: ['test -f "$RATED_REVIEW_LOOP_INPUT" && grep -q "## Design" "$RATED_REVIEW_LOOP_INPUT"'] } };
+
+  it("refuses begin when a gate fails, records nothing, and shows the gate's output", () => {
+    const ctx = repo.context({ gates: { begin: ['echo "write the design section in $RATED_REVIEW_LOOP_INPUT" >&2; exit 3'] } });
+    expect(() => begin(ctx, key, "change value", "docs/notes.md")).toThrow(
+      /gate `echo .*` failed \(exit 3\)[\s\S]*write the design section in docs\/notes.md/,
+    );
+    expect(ctx.store.active(key)).toBeNull();
+    expect(existsSync(join(repo.root, ".rated-review-loop/local/runs"))).toBe(false);
+  });
+
+  it("passes the begin input to the gates and keeps it for the reviewer", () => {
+    const ctx = repo.context({ ...gated, instructions: { afterReview: "Write the scenario map in the notes." } });
+    expect(() => begin(ctx, key, "change value", "notes.md")).toThrow(/begin refused/);
+    repo.write("notes.md", "## Design\nKeep the value positive.\n");
+    const { runId } = begin(ctx, key, "change value", "notes.md");
+    repo.write("src/value.ts", "export const value = 2;\n");
+    ready(ctx, key, ["src/value.ts"]);
+    const output = handleStop(ctx, { session_id: SESSION }, "claude", passingChecks);
+    expect(packet(ctx, runId).input).toBe("notes.md");
+    expect(output.reason).toContain("Input given when the task began: notes.md.");
+    expect(output.reason).toContain("After the review is recorded: Write the scenario map in the notes.");
+  });
+
+  it("tells the reviewer about conditional guidelines and review instructions", () => {
+    repo.write("docs/deps.md", "# Dependencies\n");
+    const ctx = repo.context({
+      guidelines: [{ path: "docs/deps.md", when: "an import crosses a feature boundary" }],
+      instructions: { review: "Check dependency directions first." },
+    });
+    const { runId, output } = reachReview(ctx);
+    expect(output.reason).toContain("Read only when it applies to the change: docs/deps.md (when an import crosses a feature boundary).");
+    expect(output.reason).toContain("Project review instructions: Check dependency directions first.");
+    expect(packet(ctx, runId)).toMatchObject({
+      guidelines: [{ path: "docs/deps.md", when: "an import crosses a feature boundary", covers: null }],
+      reviewInstructions: "Check dependency directions first.",
+      input: null,
+    });
+  });
+
+  it("tells the session about gates and project rules", () => {
+    const context = sessionContext(SESSION, parseConfig({ ...gated, instructions: { session: "Write the design first." } }));
+    const text = context.hookSpecificOutput?.additionalContext ?? "";
+    expect(text).toContain(`begin ${key} "<task>" --input <value>`);
+    expect(text).toContain("runs this project's gates");
+    expect(text).toContain("Project rules: Write the design first.");
+    const plain = sessionContext(SESSION, null).hookSpecificOutput?.additionalContext ?? "";
+    expect(plain).not.toContain("--input");
+    expect(plain).not.toContain("Project rules");
+  });
+
+  it("versions what the reviewer is told, not what only the coding agent sees", () => {
+    repo.write("docs/deps.md", "# Dependencies\n");
+    const version = (overrides: Record<string, unknown>) => skillVersion(repo.root, repo.context(overrides).config);
+    const plain = version({});
+    expect(version({ instructions: { session: "s", afterReview: "a" }, gates: { begin: ["true"] } })).toBe(plain);
+    expect(version({ instructions: { review: "Check dependency directions first." } })).not.toBe(plain);
+    expect(version({ guidelines: ["docs/deps.md"] })).not.toBe(plain);
+    expect(version({ guidelines: [{ path: "docs/deps.md", when: "an import crosses a boundary" }] })).not.toBe(
+      version({ guidelines: ["docs/deps.md"] }),
+    );
   });
 });
 
