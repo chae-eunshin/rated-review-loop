@@ -39,6 +39,8 @@ pnpm add -D rated-review-loop
 
 Node.js 22 이상과 git이 필요합니다. CLI 리뷰어를 쓰려면 `claude`나 `codex` CLI를 설치하고 로그인해 두세요.
 
+이 패키지는 CLI만 제공하고, import해서 쓰는 API는 없습니다. 공개 계약은 명령, 설정 파일, 원장(ledger) 형식입니다.
+
 ## 설정
 
 ### 1. 훅
