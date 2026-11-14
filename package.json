@@ -16,6 +16,9 @@
   "bin": {
     "rated-review-loop": "./dist/cli.js"
   },
+  "exports": {
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
     "skills",
@@ -26,13 +29,19 @@
     "node": ">=22"
   },
   "packageManager": "pnpm@11.23.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "check:readme-sync": "node scripts/check-readme-sync.ts",
-    "prepare": "tsc -p tsconfig.build.json"
+    "check:package": "publint --strict",
+    "prepare": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "prepublishOnly": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm check:package"
   },
   "keywords": [
     "code-review",
@@ -51,6 +60,7 @@
     "@types/node": "^22.10.0",
     "@types/picomatch": "^3.0.1",
     "eslint": "^10.14.0",
+    "publint": "^0.3.25",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.18.0",
     "vitest": "^5.1.0"

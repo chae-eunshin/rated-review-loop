@@ -66,6 +66,8 @@ pnpm add -D rated-review-loop
 
 Requires Node.js 22 or later and git. For CLI reviewers, install and log in to the `claude` or `codex` CLI.
 
+The package is a CLI only and has no importable API. Its public contract is the commands, the config file and the ledger format.
+
 ## Setup
 
 ### 1. Hooks
