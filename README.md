@@ -58,6 +58,8 @@ begin ──► implement ──► ready ──► [Stop hook] checks ──►
 5. The agent ends its reply with a rating question. The owner answers, and the rating is stored in the **ledger**, one small JSON file per run, committed and shared by the team. Reviewed source stays local.
 6. **stats** groups ratings by skill version and reviewer and checks the latest window.
 
+The run lifecycle, the design decisions and the planned extension points are in [docs/design.md](./docs/design.md). Changes are listed in the [changelog](./CHANGELOG.md).
+
 ## Install
 
 ```sh
