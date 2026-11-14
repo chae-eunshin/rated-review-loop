@@ -14,13 +14,19 @@ jobs:
   review-health:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
-      - run: npm install --no-save rated-review-loop
-      - run: npx rated-review-loop stats --format markdown > review-health.md
-      - uses: actions/github-script@v7
+          node-version: 24
+          # No project dependencies are installed, and a cache restored in a pull request job can be poisoned.
+          package-manager-cache: false
+      # Runs the version pinned in package.json (a semver range or a release tarball URL) without installing the
+      # project's dependencies, so it works the same in npm, pnpm and yarn repositories.
+      - name: Compute review health
+        run: |
+          SPEC=$(node -p "const p = require('./package.json'); ({ ...p.dependencies, ...p.devDependencies })['rated-review-loop'] ?? 'latest'")
+          npx --yes --package="rated-review-loop@${SPEC}" rated-review-loop stats --format markdown > review-health.md
+      - uses: actions/github-script@v9
         with:
           script: |
             const fs = require("fs");

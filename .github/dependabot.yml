@@ -1,0 +1,15 @@
+# Keeps GitHub Actions and npm dependencies current, so a deprecated runtime is caught by a pull request
+# instead of a workflow warning.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-dependencies:
+        dependency-type: development
