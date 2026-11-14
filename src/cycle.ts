@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, rmdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, relative, sep } from "node:path";
 
 import { checksPassed, runChecks, type CheckRunner } from "./checks.ts";
-import { clientOfMode, skillPath, type Config } from "./config.ts";
+import { clientOfMode, skillDisplayPath, type Config } from "./config.ts";
 import {
   captureBaseline,
   fingerprint,
@@ -255,10 +255,14 @@ function reviewRequest(ctx: Context, run: Pick<Run, "id">, cliClient: Client | n
     ].join(" ");
   }
   const guidelines = ctx.config.guidelines.length ? ` Project guidelines: ${ctx.config.guidelines.join(", ")}.` : "";
+  // The report must live outside the review scope: a new file inside it would make submit see a changed tree.
+  const report = ctx.store.workPath(run.id, "report.json");
+  mkdirSync(dirname(report), { recursive: true });
+  const reportPath = relative(ctx.root, report).split(sep).join("/");
   return [
-    `Checks passed. Read ${skillPath(ctx.root, ctx.config)} and review the change in \`${BIN} packet ${run.id}\`.${guidelines}`,
+    `Checks passed. Read ${skillDisplayPath(ctx.root, ctx.config)} and review the change in \`${BIN} packet ${run.id}\`.${guidelines}`,
     `Write findings in language "${ctx.config.language}". Do not modify code.`,
-    `Save the result JSON and record it with \`${BIN} submit ${run.id} <file>\` (an empty findings array if nothing is well-founded).`,
+    `Write the result JSON to ${reportPath} (not elsewhere in the repository) and record it with \`${BIN} submit ${run.id} ${reportPath}\` (an empty findings array if nothing is well-founded).`,
     "Then report the findings to the user and end your final message with the evaluationQuestion from the submit output, verbatim.",
     "This request is sent once for this run.",
   ].join(" ");
