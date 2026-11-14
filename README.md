@@ -16,6 +16,33 @@ Coding agents such as Claude Code and Codex can review the code they write, but 
 - **Unrated reviews cannot improve.** Without ratings, editing the review instructions is guesswork. With ratings grouped by skill version, you can compare the new skill to the old one.
 - **Usefulness drifts.** A model update or a skill edit can quietly make reviews noisy. A rolling window of the last 100 ratings catches that early, and a full window is required before alerting so small samples do not cause false alarms.
 
+## Results from real use
+
+Before it was extracted into this package, the same loop ran for six weeks (2026-09-29 to 2026-11-13) in a React Native (Expo) app under active development. Claude Code was the coding agent and also reviewed its own changes (session mode). The numbers below come from that original implementation, and every finding was rated by one owner.
+
+| Measure | Value |
+| --- | --- |
+| Review runs | 64: 60 completed, 2 skipped (nothing changed), 2 cancelled |
+| Completed reviews with no findings | 27 of 60 |
+| Findings | 49, of which 42 rated |
+| Ratings | 36 useful, 2 unsupported, 0 incorrect, 0 out-of-scope, 4 deferred |
+| Useful rate (deferred excluded, as `stats` computes it) | 36/38 = 95% (95% CI 83–99%) |
+| Median time from review request to submitted report | 40 s |
+
+By skill revision, the first version scored 6/7 = 86% (95% CI 49–97%) and the version used from October 24 scored 28/29 = 97% (95% CI 83–99%). The intervals overlap, so these ratings cannot tell the two versions apart yet. That is the comparison the loop is built for, and it needs more ratings than one person produced in six weeks.
+
+What these numbers do not show:
+
+- One person wrote the code and rated every finding, so the ratings may be lenient.
+- The original implementation hashed the review skill together with the tool's own scripts, so a new revision was not purely a skill change.
+- A review with no findings is not evidence that nothing was missed. The loop measures whether findings were useful, not what the review missed.
+
+What the trial changed in this package:
+
+- Skill versions hash only the skill, so upgrading the tool does not split the statistics.
+- Ratings moved from local files into a committed ledger, so a team can pool them and CI can alert on them.
+- Snapshots store git blob ids instead of file contents. On the same app (866 files in scope) the stored baseline per run went from 4.8 MB to 74 KB.
+
 ## How it works
 
 ```text
